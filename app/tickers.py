@@ -1,11 +1,12 @@
 import os
 import json
 from flask import jsonify, request, send_from_directory, Blueprint
-from flask_cors import CORS
 from datetime import datetime
 
 tk_bp = Blueprint('tickers', __name__)
-CORS(tk_bp)  # Abilita CORS per tutto il tuo applicativo Flask
+
+# Percorso relativo al file JSON
+tickers_path = os.path.join(tk_bp.root_path, '..', 'tickers')
 
 def create_index_file(path):
     # Genera una lista di dizionari per ogni file nella cartella tickers
@@ -35,8 +36,6 @@ def create_index_file(path):
     with open(os.path.join(path, 'index.json'), 'w') as f:
         json.dump(tickers, f, indent=4)
 
-# Percorso relativo al file JSON
-tickers_path = os.path.join(tk_bp.root_path, '..', 'tickers')
 
 @tk_bp.route('/get-tickerls')
 def get_tickers():
@@ -55,6 +54,23 @@ def get_tickers():
         return jsonify({"error": "File non trovato"}), 404
     except json.JSONDecodeError:
         return jsonify({"error": "Formato file non valido"}), 500
+
+
+@tk_bp.route('/options')
+def options():
+    response = get_tickers()
+    # Assumiamo che la risposta sia già un oggetto Flask.Response con dati JSON
+    # Se non lo è, dovresti adattare il codice per gestire la risposta correttamente
+    original_data = response.get_json()
+
+    transformed_data = [
+        {
+            "label": item["des"],
+            "value": item["name"]
+        } for item in original_data
+    ]
+
+    return jsonify(transformed_data)
 
 @tk_bp.route('/update-tickerls/<list_name>', methods=['POST'])
 def update_ticker(list_name):

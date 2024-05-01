@@ -1,12 +1,15 @@
 import os
 import json
 from flask import jsonify, request, send_from_directory, Blueprint
-from flask_cors import CORS
 from datetime import datetime
 import csv
 
 bm_bp = Blueprint('benckmark', __name__)
-CORS(bm_bp)  # Abilita CORS per tutto il tuo applicativo Flask
+
+# Percorso relativo al file JSON
+benchmark_path = os.path.join(bm_bp.root_path, '..', 'benchmark')
+# Percorso relativo al file JSON
+json_file_path = os.path.join(benchmark_path, 'index.json')
 
 @bm_bp.route('/')
 def home():
@@ -41,18 +44,11 @@ def create_index_file(path):
     with open(os.path.join(path, 'index.json'), 'w') as f:
         json.dump(benchmark, f, indent=4)
 
-# Percorso relativo al file JSON
-benchmark_path = os.path.join(bm_bp.root_path, '..', 'benchmark')
-
 @bm_bp.route('/get-benchmarks')
 def get_benchmarks():
-    # Percorso relativo al file JSON
-    json_file_path = os.path.join(benchmark_path, 'index.json')
-    print(json_file_path)
     # Crea il file index.json se non esiste
     if not os.path.isfile(json_file_path):
         create_index_file(benchmark_path)
-
     try:
         with open(json_file_path, 'r') as file:
             data = json.load(file)
