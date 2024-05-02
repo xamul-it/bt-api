@@ -8,13 +8,22 @@ from app.utils.event_emitter import EventEmitter
 import sys
 from uuid import uuid4
 import shutil
-
+import traceback
 
 sys.path.append('../')  # Aggiusta il percorso in base alla tua struttura di cartelle
 from btmain import runstrat
 
 mn = Blueprint('main', __name__)
 CORS(mn)
+
+# Percorso relativo al file JSON
+benchmark_path = os.path.join(mn.root_path, '..', 'benchmark')
+config_path = os.path.join(mn.root_path, '..', 'config')
+
+# Percorso relativo al file JSON
+json_file_path = os.path.join(benchmark_path, 'benchmarks.json')
+
+
 
 # Percorso relativo al file JSON
 data_path = os.path.join(mn.root_path, '..', 'stored')
@@ -57,6 +66,7 @@ def runstrat_background(event_emitter, data, args=[]):
         data["start"] = int(datetime.now().timestamp() * 1000)
         runstrat(args=args) 
     except Exception as e:
+        print(traceback.print_exception())
         data["stato"] = f"Errore: {e}"
         event_emitter.emit('data_changed')
     else:

@@ -7,13 +7,17 @@ tk_bp = Blueprint('tickers', __name__)
 
 # Percorso relativo al file JSON
 tickers_path = os.path.join(tk_bp.root_path, '..', 'tickers')
+config_path = os.path.join(tk_bp.root_path, '..', 'config')
+# Percorso relativo al file JSON
+json_file_path = os.path.join(config_path, 'tickers.json')
 
-def create_index_file(path):
+
+def create_index_file(tickers_path,json_file_path):
     # Genera una lista di dizionari per ogni file nella cartella tickers
     tickers = []
-    for filename in os.listdir(path):
+    for filename in os.listdir(tickers_path):
         if filename.endswith(".json") and filename != "index.json":
-            file_path = os.path.join(path, filename)
+            file_path = os.path.join(tickers_path, filename)
             try:
                 with open(file_path, 'r') as file:
                     data = json.load(file)
@@ -33,18 +37,16 @@ def create_index_file(path):
             })
 
     # Scrive i dati nel file index.json
-    with open(os.path.join(path, 'index.json'), 'w') as f:
+    with open(json_file_path, 'w') as f:
         json.dump(tickers, f, indent=4)
 
 
 @tk_bp.route('/get-tickerls')
 def get_tickers():
-    # Percorso relativo al file JSON
-    json_file_path = os.path.join(tickers_path, 'index.json')
 
     # Crea il file index.json se non esiste
     if not os.path.isfile(json_file_path):
-        create_index_file(tickers_path)
+        create_index_file(tickers_path,json_file_path)
 
     try:
         with open(json_file_path, 'r') as file:
@@ -112,8 +114,6 @@ def get_ticker(ticker_name):
 
     # Restituisce il contenuto del file
     return send_from_directory(tickers_path, f'{ticker_name}.json')
-
-
 
 @tk_bp.route('/update-tickers/<list_name>', methods=['POST'])
 def update_tickers(list_name):

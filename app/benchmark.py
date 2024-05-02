@@ -8,20 +8,22 @@ bm_bp = Blueprint('benckmark', __name__)
 
 # Percorso relativo al file JSON
 benchmark_path = os.path.join(bm_bp.root_path, '..', 'benchmark')
+config_path = os.path.join(bm_bp.root_path, '..', 'config')
+
 # Percorso relativo al file JSON
-json_file_path = os.path.join(benchmark_path, 'index.json')
+json_file_path = os.path.join(benchmark_path, 'benchmarks.json')
 
 @bm_bp.route('/')
 def home():
     return "Ciao, mondo!"
 
-def create_index_file(path):
+def create_index_file(benchmark_path,json_file_path):
     # Genera una lista di dizionari per ogni file nella cartella benchmark
     benchmark = []
-    for filename in os.listdir(path):
+    for filename in os.listdir(benchmark_path):
         print(filename)
         if filename.endswith(".csv") and filename != "index.json":
-            file_path = os.path.join(path, filename)
+            file_path = os.path.join(benchmark_path, filename)
             try:
                 with open(file_path, newline='') as csvfile:
                         reader = csv.DictReader(csvfile)
@@ -41,14 +43,14 @@ def create_index_file(path):
             })
 
     # Scrive i dati nel file index.json
-    with open(os.path.join(path, 'index.json'), 'w') as f:
+    with open(json_file_path, 'w') as f:
         json.dump(benchmark, f, indent=4)
 
 @bm_bp.route('/get-benchmarks')
 def get_benchmarks():
     # Crea il file index.json se non esiste
     if not os.path.isfile(json_file_path):
-        create_index_file(benchmark_path)
+        create_index_file(benchmark_path,json_file_path)
     try:
         with open(json_file_path, 'r') as file:
             data = json.load(file)
