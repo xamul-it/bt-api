@@ -47,7 +47,7 @@ CONFIG_IMPORTED = False
 
 # Esegui l'azione solo al primo import
 if not CONFIG_IMPORTED:
-    
+
     # Imposta la variabile globale a True per indicare che il file è stato importato
     CONFIG_IMPORTED = True
 
@@ -62,10 +62,17 @@ if not CONFIG_IMPORTED:
 
     if not os.path.exists(OUT_PATH):
         os.makedirs(OUT_PATH)
-    
+
     if not os.path.exists(TICKERLIST_PATH):
         os.makedirs(TICKERLIST_PATH)
 
     if not os.path.exists(CONFIG_PATH):
         os.makedirs(CONFIG_PATH)
+
+    if not os.path.exists(TICKER_PATH):
+        os.makedirs(TICKER_PATH)
+
+    if not os.path.exists(RUNS_FILE):
+        with open(RUNS_FILE, 'w') as file:
+             file.write('{}')
 
