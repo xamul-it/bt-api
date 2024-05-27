@@ -1,75 +1,42 @@
 import os
+import shutil
 import json
-import pandas as pd
 from threading import Thread, current_thread
+from app.paths import TICKER_LISTS_FILE, TICKER_PATH, TICKER_FILE, CONFIG_PATH, TICKERLIST_PATH, OUT_PATH, BENCHMARK_PATH
+from  app.service.EventEmitter import EventEmitter
 from flask import jsonify, request, send_from_directory, Blueprint
 from datetime import datetime
-import yfinance as yf
-import requests
-import urllib3
+import app.service.ticker_service as srv
+import app.service.main_service as mn_srv
+from uuid import uuid4
+from pytickersymbols import PyTickerSymbols
+
 
 tk_bp = Blueprint('tickers', __name__)
 
-# Percorso relativo al file JSON delle liste di ticker
-tickers_path = os.path.join(tk_bp.root_path, '..', 'tickers')
-# Percorso relativo al file JSON dei ticker
-ticker_path = os.path.join(tk_bp.root_path, '..', 'data')
+event_emitter = EventEmitter()
 
-config_path = os.path.join(tk_bp.root_path, '..', 'config')
-
-# Percorso relativo al file JSON con le liste ticker
-tickers_file_path = os.path.join(config_path, 'tickers.json')
-# Percorso relativo al file JSON con i ticker
-ticker_file_path = os.path.join(config_path, 'ticker.json')
-
-
-def create_index_file():
-    # Genera una lista di dizionari per ogni file nella cartella tickers
-    tickers = []
-    for filename in os.listdir(tickers_path):
-        if filename.endswith(".json"):
-            file_path = os.path.join(tickers_path, filename)
-            try:
-                with open(file_path, 'r') as file:
-                    data = json.load(file)
-                    num_items = len(data) #if isinstance(data, list) else 0
-            except json.JSONDecodeError:
-                num_items = 0  # Se il file non è un JSON valido o non è un array
-            stats = os.stat(file_path)
-            tickers.append({
-                'name': filename[:-5],
-                'created': datetime.fromtimestamp(stats.st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
-                'updated': datetime.fromtimestamp(stats.st_mtime).strftime('%Y-%m-%d %H:%M:%S'),
-                'num': num_items,
-                'avatar': '',
-                'des': filename
-            })
-
-    # Scrive i dati nel file index.json
-    with open(tickers_file_path, 'w') as f:
-        json.dump(tickers, f, indent=4)
+def copy_benchmark(data):
+    print(f"Finito {data}")
+    if data["stato"] == "Completato" and "benchmark" in data["args"]:
+        print("EUREKKA")
+        infile = os.path.join(OUT_PATH, "BuyAndHold", data["id"], "returns.csv")
+        outfile = os.path.join(BENCHMARK_PATH, data["args"]["tickerList"]["value"].split('.')[0]+".csv")
+        print(outfile)
+        shutil.copyfile(infile,outfile)
 
 
-@tk_bp.route('/get-tickerls')
-def get_tickers():
-    # Crea il file index.json se non esiste
-    if not os.path.isfile(tickers_file_path):
-        create_index_file()
-    try:
-        with open(tickers_file_path, 'r') as file:
-            data = json.load(file)
-            return jsonify(data)
-    except FileNotFoundError:
-        return jsonify({"error": "File non trovato"}), 404
-    except json.JSONDecodeError:
-        return jsonify({"error": "Formato file non valido"}), 500
+event_emitter.on(mn_srv.RUN_BACKTRADER, copy_benchmark)
+
+@tk_bp.route('/get-lists')
+def get_ticker_lists():
+    data = srv.get_ticker_lists()
+    return jsonify(data)
 
 
 @tk_bp.route('/options')
 def options():
-    response = get_tickers()
-    # Assumiamo che la risposta sia già un oggetto Flask.Response con dati JSON
-    # Se non lo è, dovresti adattare il codice per gestire la risposta correttamente
+    response = get_ticker_lists()
     original_data = response.get_json()
 
     transformed_data = [
@@ -81,125 +48,42 @@ def options():
 
     return jsonify(transformed_data)
 
-@tk_bp.route('/read')
-def read_ticker_csv_files():
-    '''
-    Legge i ticker da usare e crea una lista
-
-    '''
-    csv_files = [f for f in os.listdir(ticker_path) if f.endswith('.csv')]
-    data_list = []
-
-    for filename in csv_files:
-        filepath = os.path.join(ticker_path, filename)
-        try:
-            # Leggi il file CSV
-            df = pd.read_csv(filepath)
-
-            # Assicurati che il file non sia vuoto e che contenga la colonna 'Date'
-            if not df.empty and 'Date' in df.columns:
-                stats = os.stat(filepath)
-                # Crea un dizionario con le informazioni richieste
-                file_info = {
-                    'filename': filename.replace(".csv",""),
-                    'first': df['Date'].iloc[0],  # Prima data
-                    'last': df['Date'].iloc[-1],   # Ultima data
-                    'updated': datetime.fromtimestamp(stats.st_mtime).strftime('%Y-%m-%d %H:%M:%S'),
-                }
-                data_list.append(file_info)
-            else:
-                print(f"Il file {filename} è vuoto o manca la colonna 'Date'.")
-        except Exception as e:
-            print(f"Errore durante la lettura del file {filename}: {e}")
-
-    # Scrive i dati nel file index.json
-    with open(ticker_file_path, 'w') as f:
-        json.dump(data_list, f, indent=4)
-
-    return data_list
-
-@tk_bp.route('/fix')
-def fix():
-    '''
-    Legge i ticker da usare e crea una lista
-
-    '''
-    csv_files = [f for f in os.listdir(ticker_path) if f.endswith('.MI')]
-
-    for filename in csv_files:
-        filepath = os.path.join(ticker_path, filename)
-        try:
-            os.remove(filepath)
-        except Exception as e:
-            print(f"Errore durante la lettura del file {filename}: {e}")
-    return csv_files
-
 @tk_bp.route('/list')
 def list():
     '''
-    Lista di ticker
+    Legge tutti i simboli e verifica lo stato di ciascun file csv
+
     '''
-    if not os.path.isfile(ticker_file_path):
-        read_ticker_csv_files()
-    try:
-        with open(ticker_file_path, 'r') as file:
-            ticker = json.load(file)
-            return jsonify(ticker)
-    except FileNotFoundError:
-        return jsonify({"error": "File non trovato"}), 404
-    except json.JSONDecodeError:
-        return jsonify({"error": "Formato file non valido"}), 500
-
-
-def update_ticker():
-    with open(ticker_file_path, 'r') as file:
-        ticker = json.load(file)
-        for item in ticker:
-            # Crea una sessione personalizzata
-            session = requests.Session()
-            session.verify = False  # Disabilita la verifica del certificato
-            urllib3.disable_warnings()
-            requests.packages.urllib3.disable_warnings() 
-
-            name=item["filename"]
-            # download ticker ‘Adj Close’ price from yahoo finance
-            stock =  yf.download(name, progress=False, actions=True, period="max", interval="1d", session=session)
-            print(f'done {name}')
-
-            fullname = os.path.join(f'{ticker_path}', f'{name}.csv')
-            stock.to_csv(fullname,sep = ',', decimal=".")
-    read_ticker_csv_files()
+    if len(srv.data_list) == 0:
+        srv.read_ticker_csv_files()
+    return jsonify(srv.data_list)
 
 
 @tk_bp.route('/update')
 def update():
-    thread = Thread(target=update_ticker, args=())
-    # Invoca runstrat con gli argomenti convertiti
-    thread.start()
-
-    try:
-        with open(ticker_file_path, 'r') as file:
-            ticker = json.load(file)
-            return jsonify(ticker)
-    except FileNotFoundError:
-        return jsonify({"error": "File non trovato"}), 404
-    except json.JSONDecodeError:
-        return jsonify({"error": "Formato file non valido"}), 500
+    '''
+    Aggiorna i ticker
+    '''
+    
+    srv.fetch_ticker_data_background()
+    return list()
 
 
-
-@tk_bp.route('/update-tickerls/<list_name>', methods=['POST'])
-def update_tickerls(list_name):
+@tk_bp.route('/update-list/<list_name>', methods=['POST'])
+def update_list(list_name):
+    '''
+    Aggiorna il file che descrive le liste
+    '''
     data_to_update = request.json
-    file_path = os.path.join(tickers_path, 'index.json')
 
-    if not os.path.isfile(file_path):
-        return jsonify({"error": "File non trovato"}), 404
+    if not os.path.isfile(TICKER_LISTS_FILE):
+        return jsonify({"error": f"File non trovato {TICKER_LISTS_FILE}"}), 404
 
     try:
         found = False
-        with open(file_path, 'r+') as file:
+        with open(TICKER_LISTS_FILE, 'r+') as file:
             data = json.load(file)
+
             # Trova l'elemento da aggiornare nell'array
             for item in data:
                 if item['name'].lower() == list_name.lower():
@@ -217,33 +101,39 @@ def update_tickerls(list_name):
     except json.JSONDecodeError:
         return jsonify({"error": "Errore nella lettura del file JSON"}), 500
 
-@tk_bp.route('/tickerls/<ticker_name>')
+
+@tk_bp.route('/ticker-list/<ticker_name>')
 def get_ticker(ticker_name):
-    file_path = os.path.join(tickers_path, f'{ticker_name}.json')
+    '''
+    Restituisce la lista deio ticker contenuti in una lista
+    TODO: Aggiungere la gestione per avere il dettaglio di ogni ticker
+    '''
+    file_path = os.path.join(TICKERLIST_PATH, f'{ticker_name}.json')
 
     # Verifica che il file esista
     if not os.path.isfile(file_path):
         return jsonify({"fail": f"Record {ticker_name} non trovato"}), 404
-        #abort(404)  # Restituisce un errore 404 se il file non esiste
+    file_name = os.path.join(TICKERLIST_PATH, f'{ticker_name}.json')
+    with open(file_name, 'r') as file:
+        data = json.load(file)
+    # Filtra i dati
+    filtered_data = [item for item in srv.data_list if item["filename"] in data]
 
     # Restituisce il contenuto del file
-    return send_from_directory(tickers_path, f'{ticker_name}.json')
+    #return send_from_directory(TICKERLIST_PATH, f'{ticker_name}.json')
+    return jsonify(filtered_data)
+
 
 @tk_bp.route('/update-tickers/<list_name>', methods=['POST'])
 def update_tickers(list_name):
+    '''
+    Restituisce l'elenco dei ticker presenti in una lista
+    '''
     # Ottieni l'array di valori dal corpo della richiesta
     values = request.json
 
     # Costruisci il percorso del file
-    file_path = os.path.join(tickers_path, f'{list_name}.json')
-
-    # Verifica che i valori siano un array
-    if not isinstance(values, list):
-        return jsonify({"error": "I dati forniti non sono un array"}), 400
-    
-    # Assicurati che la directory esista
-    if not os.path.exists(tickers_path):
-        os.makedirs(tickers_path)
+    file_path = os.path.join(TICKERLIST_PATH, f'{list_name}.json')
 
     # Scrivi l'array nel file JSON
     try:
@@ -252,3 +142,112 @@ def update_tickers(list_name):
         return jsonify({"message": "Dati salvati correttamente"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@tk_bp.route('/init/<list_name>')
+def init_tickers(list_name):
+    '''
+    Inizializza un nuovalista di ticker
+    '''
+    print("chiamata")
+    tic = []
+    # Costruisci il percorso del file
+    file_path = os.path.join(TICKERLIST_PATH, f'{list_name}.json')
+
+    #Inizializzo la lista di ticker e la blkacklist
+    with open(file_path, 'r') as file:
+        data = json.load(file)
+        for item in data:
+            fullname = os.path.join(f'{TICKER_PATH}', f'{item}.csv')
+            with open(fullname, 'w') as file:
+                pass
+            tic.append(item)
+    #Chiamata a download
+    srv.fetch_ticker_data_background()
+
+    return jsonify({"ok": f"TODO Restrituire l'ID {file_path}","data":tic}), 200
+
+@tk_bp.route('/benchmarks')
+def benchmarks():
+    data = []
+    print("_______________________________Benchmark")
+    for root, dirs, files in os.walk(TICKERLIST_PATH):
+        for file in files:
+            print(file)
+            list_name= file.split('.')[0]
+            print(list_name)
+            benchmark(list_name)
+            data.append(list_name)
+    print("_______________________________Benchmark")
+    # Rispondi al frontend
+    return jsonify({"status": "success", "message": "Dati ricevuti con successo","Dati":data})
+
+
+
+@tk_bp.route('/benchmark/<list_name>')
+def benchmark(list_name):
+
+    file_path = os.path.join(TICKERLIST_PATH, f'{list_name}.json')
+    # Apri il file e carica il contenuto JSON
+    with open(file_path, 'r') as file:
+        data = json.load(file)
+
+    # 'data' dovrebbe essere un array, quindi puoi usare la funzione len() per ottenere il numero di elementi
+    number_of_elements = len(data)
+
+    # Converti il dizionario JSON in una lista di argomenti da riga di comando
+    # Ad esempio, converte {"param1": "val1", "param2": "val2"} in ["--param1", "val1", "--param2", "val2"]
+    args = []
+    operation_id = str(uuid4())
+
+    #Il cash deve essere 10000+1% per titolo 
+    args.append(f'--cash')
+    cash = number_of_elements*10001
+    args.append(f"{cash}")
+
+    args.append(f'--amount')
+    args.append("10000")
+
+    args.append(f'--fromdate')
+    args.append('2000-01-01')
+
+    args.append(f'--id')
+    args.append(str(operation_id))
+    args.append(f'--strat')
+    args.append(f'generic.BuyAndHold')
+    args.append(f'--commission') 
+    args.append(f'fineco')
+    args.append(f'--ticker')
+    args.append(f'{list_name}.json')
+ 
+    dati = { "id":str(operation_id),"strategia":{"label":"BuyAndHold","value":"generic.BuyAndHold"},
+             "tickerList":{"value":f"{list_name}.json","label":list_name},"cash": cash, "da":"2000-01-01", "importoOperazioni":10000, "benchmark":"benchmark"}
+    mn_srv.runstrat_background(event_emitter, dati, args)
+
+    # Rispondi al frontend
+    return jsonify({"id": operation_id, "status": "success", "message": "Dati ricevuti con successo","Dati":data})
+
+
+@tk_bp.route('/symbols')
+def symbols():
+    stock_data = PyTickerSymbols()
+    indices = stock_data.get_all_indices()
+    for idx in indices:
+        yahoo_symbols_eur = []
+        stocks = stock_data.get_stocks_by_index(idx)  # Assumendo che tu sia interessato all'indice DAX
+        for item in stocks:
+            for symbol in item['symbols']:
+                if symbol['currency'] == 'EUR':
+                    yahoo_symbols_eur.append(symbol['yahoo'])
+        file_path = os.path.join(TICKERLIST_PATH,f"{idx}.json")
+        with open(file_path, 'w') as file:
+            json.dump(yahoo_symbols_eur, file, indent=4)
+
+    srv.get_ticker_list(TICKERLIST_PATH, TICKER_LISTS_FILE)
+    return yahoo_symbols_eur
+
+@tk_bp.route('/get/<symbol>')
+def get(symbol):
+    file_path = os.path.join(TICKER_PATH,symbol+".csv")
+    with open(file_path, 'r') as file:
+        return jsonify(file.read())

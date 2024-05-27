@@ -7,6 +7,9 @@ from app.tickers import tk_bp
 from app.benchmark import bm_bp
 from app.strategy import st_bp
 from app.main import mn
+import sys
+
+#sys.path.append('../')  # Aggiusta il percorso in base alla tua struttura di cartelle
 
 app = Flask(__name__)
 CORS(app)  # Abilita CORS per tutto il tuo applicativo Flask
