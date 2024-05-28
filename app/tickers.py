@@ -144,6 +144,34 @@ def update_tickers(list_name):
         return jsonify({"error": str(e)}), 500
 
 
+@tk_bp.route('/init')
+def init():
+    '''
+    Inizializza un nuovalista di ticker
+    '''
+    print("chiamata")
+    tic = []
+    
+    for list_name in os.listdir(TICKERLIST_PATH):
+        # Costruisci il percorso del file
+        file_path = os.path.join(TICKERLIST_PATH, f'{list_name}')
+
+        #Inizializzo la lista di ticker e la blkacklist
+        with open(file_path, 'r') as file:
+            data = json.load(file)
+            for item in data:
+                fullname = os.path.join(f'{TICKER_PATH}', f'{item}.csv')
+                with open(fullname, 'w') as file:
+                    pass
+                tic.append(item)
+    
+    #Chiamata a download
+    srv.fetch_ticker_data_background()
+
+    return jsonify({"ok": f"TODO Restrituire l'ID {file_path}","data":tic}), 200
+
+
+
 @tk_bp.route('/init/<list_name>')
 def init_tickers(list_name):
     '''
@@ -243,7 +271,8 @@ def symbols():
         with open(file_path, 'w') as file:
             json.dump(yahoo_symbols_eur, file, indent=4)
 
-    srv.get_ticker_list(TICKERLIST_PATH, TICKER_LISTS_FILE)
+    srv.get_ticker_lists()
+    init()
     return yahoo_symbols_eur
 
 @tk_bp.route('/get/<symbol>')
