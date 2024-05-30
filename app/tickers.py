@@ -243,7 +243,7 @@ def symbols():
         with open(file_path, 'w') as file:
             json.dump(yahoo_symbols_eur, file, indent=4)
 
-    srv.get_ticker_list(TICKERLIST_PATH, TICKER_LISTS_FILE)
+    srv.get_ticker_lists()
     return yahoo_symbols_eur
 
 @tk_bp.route('/get/<symbol>')
