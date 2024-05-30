@@ -6,6 +6,8 @@ from datetime import datetime
 from app.tickers import tk_bp
 from app.benchmark import bm_bp
 from app.strategy import st_bp
+from app.scheduler import sc_bp
+
 from app.main import mn
 import sys
 
@@ -26,6 +28,8 @@ app.register_blueprint(mn, url_prefix='/mn')
 #Gestionew dei Strategy
 app.register_blueprint(st_bp, url_prefix='/st')
 
+# Registra il Blueprint dello scheduler
+app.register_blueprint(sc_bp, url_prefix='/sc')
 
 @app.route('/')
 def home():
