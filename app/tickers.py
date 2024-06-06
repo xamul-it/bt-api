@@ -1,32 +1,15 @@
 import os
-import shutil
 import json
-from threading import Thread, current_thread
-from app.paths import TICKER_LISTS_FILE, TICKER_PATH, TICKER_FILE, CONFIG_PATH, TICKERLIST_PATH, OUT_PATH, BENCHMARK_PATH
-from  app.service.EventEmitter import EventEmitter
-from flask import jsonify, request, send_from_directory, Blueprint
+from app.paths import TICKER_LISTS_FILE, TICKER_PATH,  TICKERLIST_PATH
+from flask import jsonify, request, Blueprint
 from datetime import datetime
 import app.service.ticker_service as srv
-import app.service.main_service as mn_srv
-from uuid import uuid4
+
 from pytickersymbols import PyTickerSymbols
 
 
 tk_bp = Blueprint('tickers', __name__)
 
-event_emitter = EventEmitter()
-
-def copy_benchmark(data):
-    print(f"Finito {data}")
-    if data["stato"] == "Completato" and "benchmark" in data["args"]:
-        print("EUREKKA")
-        infile = os.path.join(OUT_PATH, "BuyAndHold", data["id"], "returns.csv")
-        outfile = os.path.join(BENCHMARK_PATH, data["args"]["tickerList"]["value"].split('.')[0]+".csv")
-        print(outfile)
-        shutil.copyfile(infile,outfile)
-
-
-event_emitter.on(mn_srv.RUN_BACKTRADER, copy_benchmark)
 
 @tk_bp.route('/get-lists')
 def get_ticker_lists():
@@ -195,65 +178,6 @@ def init_tickers(list_name):
 
     return jsonify({"ok": f"TODO Restrituire l'ID {file_path}","data":tic}), 200
 
-@tk_bp.route('/benchmarks')
-def benchmarks():
-    data = []
-    print("_______________________________Benchmark")
-    for root, dirs, files in os.walk(TICKERLIST_PATH):
-        for file in files:
-            print(file)
-            list_name= file.split('.')[0]
-            print(list_name)
-            benchmark(list_name)
-            data.append(list_name)
-    print("_______________________________Benchmark")
-    # Rispondi al frontend
-    return jsonify({"status": "success", "message": "Dati ricevuti con successo","Dati":data})
-
-
-
-@tk_bp.route('/benchmark/<list_name>')
-def benchmark(list_name):
-
-    file_path = os.path.join(TICKERLIST_PATH, f'{list_name}.json')
-    # Apri il file e carica il contenuto JSON
-    with open(file_path, 'r') as file:
-        data = json.load(file)
-
-    # 'data' dovrebbe essere un array, quindi puoi usare la funzione len() per ottenere il numero di elementi
-    number_of_elements = len(data)
-
-    # Converti il dizionario JSON in una lista di argomenti da riga di comando
-    # Ad esempio, converte {"param1": "val1", "param2": "val2"} in ["--param1", "val1", "--param2", "val2"]
-    args = []
-    operation_id = str(uuid4())
-
-    #Il cash deve essere 10000+1% per titolo 
-    args.append(f'--cash')
-    cash = number_of_elements*10001
-    args.append(f"{cash}")
-
-    args.append(f'--amount')
-    args.append("10000")
-
-    args.append(f'--fromdate')
-    args.append('2000-01-01')
-
-    args.append(f'--id')
-    args.append(str(operation_id))
-    args.append(f'--strat')
-    args.append(f'generic.BuyAndHold')
-    args.append(f'--commission') 
-    args.append(f'fineco')
-    args.append(f'--ticker')
-    args.append(f'{list_name}.json')
- 
-    dati = { "id":str(operation_id),"strategia":{"label":"BuyAndHold","value":"generic.BuyAndHold"},
-             "tickerList":{"value":f"{list_name}.json","label":list_name},"cash": cash, "da":"2000-01-01", "importoOperazioni":10000, "benchmark":"benchmark"}
-    mn_srv.runstrat_background(event_emitter, dati, args)
-
-    # Rispondi al frontend
-    return jsonify({"id": operation_id, "status": "success", "message": "Dati ricevuti con successo","Dati":data})
 
 
 @tk_bp.route('/symbols')
@@ -271,8 +195,8 @@ def symbols():
         with open(file_path, 'w') as file:
             json.dump(yahoo_symbols_eur, file, indent=4)
 
-    srv.get_ticker_lists()
-    init()
+    srv.update_ticker_lists()
+    #init()
     return yahoo_symbols_eur
 
 @tk_bp.route('/get/<symbol>')

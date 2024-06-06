@@ -12,11 +12,6 @@ from app.paths import TICKER_LISTS_FILE, TICKER_PATH, TICKER_FILE, CONFIG_PATH, 
 from app.service.EventEmitter import EventEmitter
 import time
 
-EV_TICKER_CHANGED = "EV_TICKER_CHANGED"
-#Evento generato quando vengono scaricati dati nuovi
-EV_TICKER_FETCHED = "EV_TICKER_FETCHED"
-#Evento generato quando le liste dei ticker cambiano
-EV_TICKERLIST_CHANGE ="EV_TICKERLIST_CHANGE"
 
 data_list = []
 blacklist = []
@@ -24,6 +19,9 @@ blacklist = []
 emitter = EventEmitter()
 
 def get_ticker_lists():
+    '''
+    Restituisce la lista delle liste ticker
+    '''
     if not os.path.isfile(TICKER_LISTS_FILE):
         # Genera una lista di dizionari per ogni file nella cartella tickers
         update_ticker_lists()
@@ -42,7 +40,9 @@ def update_ticker_lists():
             old = json.load(file)
     tickers = []
     # Trasformiamo data_list in un set di filename per una ricerca più efficiente
-    filenames_in_data_list = {item['filename'] for item in data_list}
+    
+    filenames_in_data_list = {item['filename'] for item in data_list if item['status'] == 'ok'}
+    print(f"Inizio Elabolo la lista {filenames_in_data_list}")
     for filename in os.listdir(TICKERLIST_PATH):
         if filename.endswith(".json"):
             file_path = os.path.join(TICKERLIST_PATH, filename)
@@ -72,6 +72,8 @@ def update_ticker_lists():
     # Scrive i dati nel file index.json
     with open(TICKER_LISTS_FILE, 'w') as f:
         json.dump(tickers, f, indent=4)
+    #data = json.load(file)
+    print(tickers)
 
 fetchlist={}
 
@@ -90,7 +92,6 @@ def fetch_ticker_data():
     print(f"fetch file:{TICKER_FILE}")
     with open(TICKER_FILE, 'r') as file:
         ticker = json.load(file)
-        print(f"ticker: {ticker}")
         for item in ticker:
             # Crea una sessione personalizzata
             session = requests.Session()
@@ -173,8 +174,8 @@ def read_ticker_csv_files():
         json.dump(srv.data_list, f, indent=4)
     return srv.data_list
 
-read_ticker_csv_files()
+#read_ticker_csv_files()
 
-emitter.on(EV_TICKER_FETCHED,read_ticker_csv_files)
-emitter.on(EV_TICKER_CHANGED,fetch_ticker_data)
-emitter.on(EV_TICKERLIST_CHANGE,get_ticker_lists)
+emitter.on(emitter.EV_TICKER_FETCHED,read_ticker_csv_files)
+emitter.on(emitter.EV_TICKER_CHANGED,fetch_ticker_data)
+emitter.on(emitter.EV_TICKERLIST_CHANGE,get_ticker_lists)

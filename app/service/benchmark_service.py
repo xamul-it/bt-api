@@ -1,7 +1,11 @@
+import shutil
 import os
 import json
 import app.service.ticker_service as srv
+import app.service.main_service as mn_srv
 import csv
+from app.service.EventEmitter import EventEmitter
+from app.paths import BENCHMARK_PATH, OUT_PATH, BENCHMARK_FILE
 
 srv.benchmark = []
 
@@ -39,3 +43,19 @@ def read_csv_to_json(filename):
         for row in reader:
             data.append(row)
     return data
+
+emitter = EventEmitter()
+
+def copy_benchmark(data):
+    print(f"Finito {data}")
+    if data["stato"] == "Completato" and "benchmark" in data["args"]:
+        print("EUREKKA")
+        infile = os.path.join(OUT_PATH, "BuyAndHold", data["id"], "returns.csv")
+        outfile = os.path.join(BENCHMARK_PATH, data["args"]["tickerList"]["value"].split('.')[0]+".csv")
+        print(outfile)
+        shutil.copyfile(infile,outfile)
+        create_index_file(BENCHMARK_PATH, BENCHMARK_FILE)
+
+
+emitter.on(emitter.EV_RUN_BACKTRADER, copy_benchmark)
+

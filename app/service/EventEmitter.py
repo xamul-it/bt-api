@@ -1,5 +1,13 @@
+
 class EventEmitter:
     _instance = None
+    EV_TICKER_CHANGED = "EV_TICKER_CHANGED"
+    #Evento generato quando vengono scaricati dati nuovi
+    EV_TICKER_FETCHED = "EV_TICKER_FETCHED"
+    #Evento generato quando le liste dei ticker cambiano
+    EV_TICKERLIST_CHANGE ="EV_TICKERLIST_CHANGE"
+    #Generico ???
+    EV_RUN_BACKTRADER = "RUN_BACKTRADER"
 
     def __new__(cls):
         if cls._instance is None:
@@ -17,3 +25,5 @@ class EventEmitter:
     def emit(self, event, *args, **kwargs):
         for callback in self.listeners.get(event, []):
             callback(*args, **kwargs)
+
+

@@ -1,6 +1,7 @@
 import os
 import json
 from app.service.EventEmitter import EventEmitter
+import app.service.EventEmitter
 from flask import jsonify, request, send_from_directory, Blueprint
 from flask_cors import CORS
 from uuid import uuid4
@@ -16,7 +17,6 @@ event_emitter = EventEmitter()
 with open(RUNS_FILE, 'r') as f:
     data = json.load(f)
     srv.runs.update(data)
-
 
 
 def reload_data():
@@ -67,7 +67,7 @@ def main():
        args.append(f'--debug')
 
     data["id"] = str(operation_id)
-    srv.runstrat_background(event_emitter, data, args)
+    srv.runstrat_background(data, args)
     # Rispondi al frontend
     return jsonify({"id": operation_id, "status": "success", "message": "Dati ricevuti con successo","Dati":data})
 
@@ -113,12 +113,12 @@ def pin_switch():
     # Move the folder using shutil.move()
     shutil.move(source_path, destination_path)
     r["pinned"] = not r["pinned"]
-    event_emitter.emit(srv.RUN_BACKTRADER,r)
+    event_emitter.emit(app.service.EventEmitter.EV_RUN_BACKTRADER,r)
     return jsonify({'message': 'Data updated successfully'})
 
 @mn.route('/delete', methods=['POST'])
 def delete():
     id = request.get_json().get('id')
     del srv.runs[id]
-    event_emitter.emit(srv.RUN_BACKTRADER,request.get_json())
+    event_emitter.emit(app.service.EventEmitter.EV_RUN_BACKTRADER,request.get_json())
     return jsonify({'message': 'Data updated successfully'})

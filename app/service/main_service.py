@@ -3,15 +3,12 @@ import json
 import traceback
 from btmain import runstrat
 from threading import Thread, current_thread
-from uuid import uuid4
 from app.service.EventEmitter import EventEmitter
 from app.paths import RUNS_FILE
 
-RUN_BACKTRADER = "RUN_BACKTRADER"
+emitter = EventEmitter()
 
-event_emitter = EventEmitter()
-
-def runstrat_background(event_emitter, data, args=[]):
+def runstrat_background( data, args=[]):
     operation_id = data["id"]
 
     tdata = {}
@@ -22,15 +19,15 @@ def runstrat_background(event_emitter, data, args=[]):
     tdata["pinned"] = False
     tdata["descizione"] = ""
 
-    thread = Thread(target=btrunstrat, args=(event_emitter, tdata, args))
+    thread = Thread(target=btrunstrat, args=(tdata, args))
     # Invoca runstrat con gli argomenti convertiti
     thread.start()
     print(f"Emetto segnale")
-    event_emitter.emit(RUN_BACKTRADER,tdata)
+    emitter.emit(emitter.EV_RUN_BACKTRADER,tdata)
     return tdata
 
 
-def btrunstrat(event_emitter, data, args=[]):
+def btrunstrat(data, args=[]):
     """Funzione wrapper per eseguire runstrat in un thread separato e tenere traccia dello stato."""
     
     try:
@@ -40,11 +37,11 @@ def btrunstrat(event_emitter, data, args=[]):
         print(traceback.print_exception(e))
         data["stato"] = "Errore"
         data["errorMessage"] = f"{e}"
-        event_emitter.emit(RUN_BACKTRADER, data)
+        emitter.emit(emitter.EV_RUN_BACKTRADER, data)
     else:
         data["stato"] = "Completato"
         data["end"] = int(datetime.now().timestamp() * 1000)
-        event_emitter.emit(RUN_BACKTRADER, data)
+        emitter.emit(emitter.EV_RUN_BACKTRADER, data)
         print("Fine elaborazione")
 
 
@@ -60,4 +57,4 @@ def save_data(data):
     with open(RUNS_FILE, 'w') as f:
         json.dump(filtered_runs, f)
 
-event_emitter.on(RUN_BACKTRADER, save_data)
+emitter.on(emitter.EV_RUN_BACKTRADER, save_data)

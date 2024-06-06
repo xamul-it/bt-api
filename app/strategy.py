@@ -1,4 +1,3 @@
-import os
 import json
 from flask import jsonify, Blueprint
 from app.paths import STRATEGIES_FILE
