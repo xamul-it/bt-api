@@ -1,9 +1,6 @@
-<<<<<<< HEAD
-=======
 #!/usr/bin/python
 import os
 import json
->>>>>>> dd3c6c2a1ffa25e05f3b14504a1eef197dc9ce67
 from flask import Flask
 from flask_cors import CORS
 from datetime import datetime
