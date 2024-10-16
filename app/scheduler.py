@@ -1,25 +1,88 @@
-from flask import Blueprint, jsonify
+
+import logging
+import os
+import shutil
+import threading
+import traceback
+from app.paths import DATA_PATH, OUT_PATH, SCHEDULE_PATH
+from flask import Blueprint, jsonify, request
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.executors.pool import ProcessPoolExecutor, ThreadPoolExecutor
+from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
+from apscheduler.triggers.date import DateTrigger
+import time
 from datetime import datetime
 import app.service.ticker_service as tk_srv
+import app.service.main_service as mn_srv
 import json
 from datetime import datetime, timedelta
+from app.service.EventEmitter import EventEmitter
 
 
 # Crea un Blueprint per il controller dello scheduler
 sc_bp = Blueprint('scheduler', __name__)
+logger = logging.getLogger(__name__)
 
+emitter = EventEmitter()
 # Inizializza lo scheduler
-scheduler = BackgroundScheduler()
+
+# Configura l'esecutore con un massimo di 2 thread (limite al parallelismo)
+executors = {
+    'default': ThreadPoolExecutor(2),  # Limita a 2 job paralleli
+    'processpool': ProcessPoolExecutor(1)  # Limita ulteriormente i job pesanti
+}
+
+# Crea lo scheduler con l'esecutore personalizzato
+scheduler = BackgroundScheduler(executors=executors)
+
 scheduler.start()
+#scheduler.pause()
 
-def some_job():
-    print("Doing some job...")
+IMMEDIATE="_immediate"
 
-# Schedula alcuni job di esempio
-scheduler.add_job(some_job, 'interval', seconds=30, id='job1')
-scheduler.add_job(some_job, 'interval', minutes=1, id='job2')
-scheduler.add_job(tk_srv.read_ticker_csv_files, 'interval', hours=24, start_date=datetime.now() + timedelta(seconds=10), id='Tickers list')
+# Schedula il job di caricamento ticker
+#scheduler.add_job(tk_srv.read_ticker_csv_files, 'interval', hours=24, start_date=datetime.now() + timedelta(seconds=10), id='Tickers list')
+
+def load_jobs(data=None):
+    logger.debug("Avvio schedulazioni")
+    # Iterare su tutti i file nella cartella
+    for filename in os.listdir(SCHEDULE_PATH):
+        # Verifica se il file è un file JSON
+        if filename.endswith('.json'):
+            file_path = os.path.join(SCHEDULE_PATH, filename)
+            
+            # Aprire e caricare il file JSON
+            with open(file_path, 'r', encoding='utf-8') as json_file:
+                try:
+                    # Carica il file JSON in un dizionario
+                    data = json.load(json_file)
+                    del(data["end"])
+                    args=mn_srv.json2args(data["id"],data["args"])
+                    #args=data["args"]
+                    id = data["id"]
+
+                    type = data["scheduleType"]["value"]
+                    if type == "H":
+                        trigger=CronTrigger(minute=0, hour='8-20')
+                    elif type=="D":
+                        trigger=CronTrigger(hour=20, minute=0)
+                    elif type=="W":
+                        trigger=CronTrigger(day_of_week='fri', hour=20, minute=0)
+                    
+                    #trigger=DateTrigger(run_date=datetime.now())
+                    logger.debug(f"Avvio schedulazioni {id}:{trigger}:{args}")
+                    # Sovrascrive il job esistente con lo stesso id)
+                    scheduler.add_job(mn_srv.runstrat, trigger=trigger, id=id, args=[args], replace_existing=True)
+    
+                except Exception  as e:
+                    print(f"Errore nel parsing del file {filename}: {e}")
+                    traceback.print_exc()
+    #return jsonify("ok")
+
+
+load_jobs()
+logger.info("---Avvio schedulazioni")
 
 
 def save_jobs_to_json():
@@ -49,6 +112,24 @@ def load_jobs_from_json():
         print("No jobs to load.")
 
 
+# Definisci la route per ottenere l'elenco dei job
+@sc_bp.route('/index')
+def index():
+    res = {}
+    res["children"] = []
+    for filename in os.listdir(SCHEDULE_PATH):
+        # Verifica se il file è un file JSON
+        if filename.endswith('.json'):
+            file_path = os.path.join(SCHEDULE_PATH, filename)
+            
+            # Aprire e caricare il file JSON
+            with open(file_path, 'r', encoding='utf-8') as json_file:
+                # Carica il file JSON in un dizionario
+                data = json.load(json_file)
+                res["children"].append({"name" :  data["id"]})
+    
+    return jsonify(res)
+
 
 # Definisci la route per ottenere l'elenco dei job
 @sc_bp.route('/jobs')
@@ -56,12 +137,16 @@ def list_jobs():
     jobs = scheduler.get_jobs()
     jobs_list = []
     for job in jobs:
+        try:
+            next_run_time = job.next_run_time.strftime('%Y-%m-%d %H:%M:%S') 
+        except:
+            next_run_time = 'None'
         job_info = {
             'id': job.id,
-            'next_run_time': job.next_run_time.strftime('%Y-%m-%d %H:%M:%S') if job.next_run_time else 'None',
+            'next_run_time': next_run_time,
             'trigger': str(job.trigger),
-            'function': str(job.func.__name__ ),
-            'args ': str(job.args)
+            'function': getattr(job.func, '__name__', repr(job.func)),
+            'args': str(job.args)
         }
         jobs_list.append(job_info)
     
@@ -95,6 +180,16 @@ def pause_job(job_id):
         return jsonify({'message': f'Job {job_id} paused successfully'})
     return jsonify({'message': 'Job not found'}), 404
 
+@sc_bp.route('/delete_job/<job_id>', methods=['POST'])
+def delete_job(job_id):
+    job = scheduler.get_job(job_id)
+    if job:
+        scheduler.remove_job(job_id)
+        file_path = os.path.join(SCHEDULE_PATH, f"{job_id}.json")
+        os.remove(file_path)
+        return jsonify({'message': f'Job {job_id} paused successfully'})
+    return jsonify({'message': 'Job not found'}), 404
+
 
 @sc_bp.route('/resume_job/<job_id>', methods=['POST'])
 def resume_job(job_id):
@@ -104,3 +199,83 @@ def resume_job(job_id):
         return jsonify({'message': f'Job {job_id} resumed successfully'})
     return jsonify({'message': 'Job not found'}), 404
 
+@sc_bp.route('/run_job/<job_id>', methods=['POST'])
+def run_job(job_id):
+    job = scheduler.get_job(job_id)
+    if job:
+
+        immediate_trigger = DateTrigger(run_date=datetime.now())
+
+        scheduler.add_job(
+                job.func, 
+                trigger=immediate_trigger,  # Esecuzione immediata
+                args=job.args, 
+                kwargs=job.kwargs, 
+                id=f"{job_id}{IMMEDIATE}"
+            )
+
+        emitter.emit(EventEmitter.EV_SCHEDULER)
+        return jsonify({'message': f'Job {job_id} executed immediately and original schedule restored'})
+    return jsonify({'message': 'Job not found'}), 404
+
+@sc_bp.route('/update_job', methods=['POST'])
+def update_job():
+    id = request.get_json().get('id')
+    name = request.get_json().get('name')
+    destination_path = os.path.join(SCHEDULE_PATH, f"{name}.json")
+    if id != name:
+        source_path = os.path.join(SCHEDULE_PATH, f"{id}.json")
+        shutil.move(source_path, destination_path)
+
+    scheduleType = request.get_json().get('type')
+    with open(destination_path, 'r', encoding='utf-8') as json_file:
+        # Carica il file JSON in un dizionario
+        r = json.load(json_file)
+        r["scheduleType"] = scheduleType
+        r["id"] = name
+        with open(destination_path, 'w') as f:
+            json.dump(r, f)
+    #Rimuovo il vecchio job
+    scheduler.remove_job(id)
+    load_jobs()
+    return jsonify({'message': f'Job {id} executed immediately and original schedule restored'})
+    
+
+
+# Crea un lock globale
+lock = threading.Lock()
+
+# Listener per intercettare quando un job è completato o fallisce
+def job_listener(event):
+    with lock: #devo evitare copie sovrapposte
+        logger.error("-----------------------------------")
+        if event.exception:
+            logger.debug(f"Il job {event.job_id} ha generato un'eccezione")
+
+        else:
+            logger.debug(f"Il job {event.job_id} è stato completato con successo")
+            source_path = OUT_PATH
+            destination_path = SCHEDULE_PATH
+
+            job_id = event.job_id[:-len(IMMEDIATE)] if event.job_id.endswith(IMMEDIATE) else event.job_id
+            
+            file_path = os.path.join(SCHEDULE_PATH, f"{job_id}.json")
+            if not os.path.exists(file_path): # Non è un job di esecuzione 
+                return
+            with open(file_path, 'r', encoding='utf-8') as json_file:
+                # Carica il file JSON della schedulazione
+                data = json.load(json_file)
+                strategy = data["args"]["strategia"]["value"]
+                strategy = strategy.split(".")[-1]
+                # Sposto i file
+                source_path = os.path.join(source_path, strategy)
+                source_path = os.path.join(source_path, job_id)
+
+                destination_path = os.path.join(destination_path, job_id)
+                shutil.rmtree(destination_path)
+                shutil.move(source_path, destination_path)
+
+
+# Aggiungi il listener per intercettare gli eventi di completamento dei job
+scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
+emitter.on(emitter.EV_SCHEDULER, load_jobs)

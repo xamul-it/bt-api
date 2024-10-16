@@ -1,70 +1,30 @@
 import os
 import json
-from app.service.EventEmitter import EventEmitter
-import app.service.EventEmitter
-from flask import jsonify, request, send_from_directory, Blueprint
+from app.paths import DATA_PATH, OUT_PATH, SCHEDULE_PATH
+from flask import jsonify, request, Blueprint, abort
 from flask_cors import CORS
 from uuid import uuid4
 import shutil
 import app.service.main_service as srv
-from app.paths import RUNS_FILE
 from app.service.EventEmitter import EventEmitter
+import logging
+
 
 mn = Blueprint('main', __name__)
 CORS(mn)
 
 event_emitter = EventEmitter()
-with open(RUNS_FILE, 'r') as f:
-    data = json.load(f)
-    srv.runs.update(data)
-
-
-def reload_data():
-    if not srv.runs:
-        try:
-            with open(RUNS_FILE, 'r') as f:
-                data = json.load(f)
-                srv.runs.update(data)
-        except Exception as e:
-            print(e)
-            pass
+logger = logging.getLogger(__name__)
+srv.load_data()
 
 
 @mn.route('/main', methods=['POST'])
 def main():
     # Ottieni i dati inviati dal frontend
     data = request.json
-
-    # Dizionario per la mappatura dei nomi dei campi
-    mappatura_campi = {"a": "todate", "cash": "cash", "da": "from",	"importoOperazioni": "amount", "parametriStrategia": "stratargs", }
-
-    # Converti il dizionario JSON in una lista di argomenti da riga di comando
-    # Ad esempio, converte {"param1": "val1", "param2": "val2"} in ["--param1", "val1", "--param2", "val2"]
-    args = []
     operation_id = str(uuid4())
-    for key, value in data.items():
 
-        # Usa get per prevenire KeyError se la chiave non è trovata nella mappatura
-        if key in mappatura_campi:
-            arg_name = mappatura_campi.get(key, key)
-
-            args.append(f'--{arg_name}')
-            args.append(str(value))
-
-    args.append(f'--id')
-    args.append(str(operation_id))    
-    args.append(f'--strat')
-    args.append(f'{data["strategia"]["value"]}')
-    args.append(f'--commission') 
-    args.append(f'{data["tipoCommissioni"]["value"]}')
-    args.append(f'--ticker')
-    args.append(f'{data["tickerList"]["value"]}.json')
-
-    args.append(f'--benchmark')
-    args.append(f'{data["tickerList"]["value"]}')
-
-    if(data["debug"] == True):
-       args.append(f'--debug')
+    args = srv.json2args(operation_id,data)
 
     data["id"] = str(operation_id)
     srv.runstrat_background(data, args)
@@ -84,9 +44,42 @@ def stato_chiamate():
 @mn.route('/clear', methods=['GET'])
 def clear():
     srv.runs = {}
-    reload_data()
+    srv.load_data()
     # Restituisce l'elenco delle chiamate attive e il loro stato
     return jsonify(list(srv.runs.values()))
+
+@mn.route('/schedule', methods=['POST'])
+def schedule():
+    '''
+    Schedula l'esecuzione del calcolo.
+    Le possibilità sono: 
+        giornaliero: il calcolo viene fatto una volta al giorno alle 20:00
+        orario: il calcolo viene fatto ogni ora dalle 8:00 alle 20:00
+        settimanale: il calcolo viene fatto il venerdì sera alle 20:00
+    1) Viene copiato un file id nella cartella schedule, con nome_file = nome e viene aggiunto un'attributo
+    2) type che indica il tipo di schedulazione
+    3) Viene invocato il servizio dello scheduler che avvia il job con nome nome_file
+
+    '''
+    id = request.get_json().get('id')
+    name = request.get_json().get('name')
+    scheduleType = request.get_json().get('type')
+    r = srv.runs[id].copy()
+    r["scheduleType"] = scheduleType
+    r["id"] = name
+    destination_path = os.path.join(SCHEDULE_PATH, f"{name}.json")
+
+    logger.debug(f"{destination_path}-- {r}")
+
+    if os.path.exists(destination_path):
+        return abort(400, description='Schedulename alredy exixting')
+
+    with open(destination_path, 'w') as f:
+        json.dump(r, f)
+
+    event_emitter.emit(EventEmitter.EV_SCHEDULER,r)
+    return jsonify({'message': 'Successfully scheduled'})
+
 
 @mn.route('/pin-switch', methods=['POST'])
 def pin_switch():
@@ -96,11 +89,11 @@ def pin_switch():
 
     # Define source and destination paths
     if r["pinned"]:
-        source_path = "stored"
-        destination_path = "out"
+        source_path = DATA_PATH
+        destination_path = OUT_PATH
     else:
-        source_path = "out"
-        destination_path = "stored"
+        source_path = OUT_PATH
+        destination_path = DATA_PATH
     
     strategy = strategy.split(".")[-1]
     source_path = os.path.join(source_path, strategy)
@@ -113,12 +106,12 @@ def pin_switch():
     # Move the folder using shutil.move()
     shutil.move(source_path, destination_path)
     r["pinned"] = not r["pinned"]
-    event_emitter.emit(app.service.EventEmitter.EV_RUN_BACKTRADER,r)
+    event_emitter.emit(EventEmitter.EV_UPDATED_RUNS,r)
     return jsonify({'message': 'Data updated successfully'})
 
 @mn.route('/delete', methods=['POST'])
 def delete():
     id = request.get_json().get('id')
     del srv.runs[id]
-    event_emitter.emit(app.service.EventEmitter.EV_RUN_BACKTRADER,request.get_json())
+    event_emitter.emit(EventEmitter.EV_UPDATED_RUNS,request.get_json())
     return jsonify({'message': 'Data updated successfully'})

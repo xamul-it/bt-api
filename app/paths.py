@@ -25,7 +25,10 @@ CONFIG_PATH = os.path.join(root_path,  'config')
 BENCHMARK_PATH = os.path.join(root_path,  'benchmark')
 
 # Percorso relativo al file JSON
-DATA_PATH = os.path.join(root_path,  'stored')
+DATA_PATH = os.path.join(CONFIG_PATH,  'stored')
+
+# Percorso relativo al file JSON
+SCHEDULE_PATH = os.path.join(CONFIG_PATH,  'schedule')
 
 # Percorso relativo al file JSON con le liste ticker
 TICKER_LISTS_FILE = os.path.join(CONFIG_PATH, 'tickers.json')
@@ -39,8 +42,6 @@ STRATEGIES_FILE = os.path.join(CONFIG_PATH, 'strategies.json')
 # Percorso relativo al file JSON
 BENCHMARK_FILE = os.path.join(CONFIG_PATH, 'benchmarks.json')
 
-# Percorso relativo al file JSON
-RUNS_FILE = os.path.join(DATA_PATH, 'runs.json')
 
 # Definisci una variabile globale per tenere traccia dello stato di importazione
 CONFIG_IMPORTED = False
@@ -53,6 +54,9 @@ if not CONFIG_IMPORTED:
 
     if not os.path.exists(DATA_PATH):
         os.makedirs(DATA_PATH)
+
+    if not os.path.exists(SCHEDULE_PATH):
+        os.makedirs(SCHEDULE_PATH)
 
     if not os.path.exists(TICKERLIST_PATH):
         os.makedirs(TICKERLIST_PATH)
@@ -71,8 +75,4 @@ if not CONFIG_IMPORTED:
 
     if not os.path.exists(TICKER_PATH):
         os.makedirs(TICKER_PATH)
-
-    if not os.path.exists(RUNS_FILE):
-        with open(RUNS_FILE, 'w') as file:
-             file.write('{}')
 

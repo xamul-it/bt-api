@@ -7,7 +7,10 @@ class EventEmitter:
     #Evento generato quando le liste dei ticker cambiano
     EV_TICKERLIST_CHANGE ="EV_TICKERLIST_CHANGE"
     #Generico ???
-    EV_RUN_BACKTRADER = "RUN_BACKTRADER"
+    EV_UPDATED_RUNS = "RUN_BACKTRADER"
+
+    #Scheduler change
+    EV_SCHEDULER = "EV_SCHEDULER"
 
     def __new__(cls):
         if cls._instance is None:

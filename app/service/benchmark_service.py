@@ -57,5 +57,5 @@ def copy_benchmark(data):
         create_index_file(BENCHMARK_PATH, BENCHMARK_FILE)
 
 
-emitter.on(emitter.EV_RUN_BACKTRADER, copy_benchmark)
+emitter.on(emitter.EV_UPDATED_RUNS, copy_benchmark)
 

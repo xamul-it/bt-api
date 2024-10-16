@@ -11,12 +11,14 @@ from app.service.EventEmitter import EventEmitter
 from app.paths import TICKER_LISTS_FILE, TICKER_PATH, TICKER_FILE, CONFIG_PATH, TICKERLIST_PATH, OUT_PATH, BENCHMARK_PATH
 from app.service.EventEmitter import EventEmitter
 import time
+import logging
 
 
 data_list = []
 blacklist = []
 
 emitter = EventEmitter()
+logger = logging.getLogger(__name__)
 
 def get_ticker_lists():
     '''
@@ -77,20 +79,20 @@ def update_ticker_lists():
 
 fetchlist={}
 
-def fetch_ticker_data_background():
+def fetch_ticker_data_background(ticker_file=TICKER_FILE):
     '''
     Aggiorna i dati dei ticker in background
     '''
-
-    thread = Thread(target=fetch_ticker_data)
+    thread = Thread(target=fetch_ticker_data, args=(ticker_file,))
     thread.start()
 
-def fetch_ticker_data():
+def fetch_ticker_data(ticker_file=TICKER_FILE):
     '''
     Aggiorna tutti i ticker presenti nella cartella
+    Attenzione al parametro, 
     '''
-    print(f"fetch file:{TICKER_FILE}")
-    with open(TICKER_FILE, 'r') as file:
+    logger.debug(f"fetch file:{ticker_file}")
+    with open(ticker_file, 'r') as file:
         ticker = json.load(file)
         for item in ticker:
             # Crea una sessione personalizzata
@@ -99,7 +101,10 @@ def fetch_ticker_data():
             urllib3.disable_warnings()
             requests.packages.urllib3.disable_warnings() 
 
-            name=item["filename"]
+            if ticker_file==TICKER_FILE:
+                name=item["filename"]
+            else: 
+                name=item
             # download ticker ‘Adj Close’ price from yahoo finance
             retries=3
             delay=5
@@ -111,32 +116,45 @@ def fetch_ticker_data():
                     print(f"errore nel caricamento di {name}: {e}")
                     if attempt < retries:
                         time.sleep(delay)  # Attendi prima di riprovare
-            print(f'done {name}')
+            logger.debug(f'done {name}')
 
             fullname = os.path.join(f'{TICKER_PATH}', f'{name}.csv')
             stock.to_csv(fullname,sep = ',', decimal=".")
-    emitter.emit(EV_TICKER_FETCHED)
+    logger.debug(f"Genero evento :{ticker_file}")
+    emitter.emit(emitter.EV_TICKER_FETCHED,ticker_file)
 
 
-def read_ticker_csv_files():
+def read_ticker_csv_files(ticker_file=None):
     '''
     Aggiorna la lista dei ticker e la blacklist
 
     '''
-    csv_files = [f for f in os.listdir(TICKER_PATH) if f.endswith('.csv')]
-    srv.data_list = []
-    srv.blacklist = []
+    logger.debug(f"read_ticker_csv_files {ticker_file}")
+    if ticker_file is None:
+        csv_files = [f for f in os.listdir(TICKER_PATH) if f.endswith('.csv')]
+    elif ticker_file == "bl.json":
+        return 
+    else:
+        csv_files = []
+        with open(ticker_file, 'r') as file:
+            csv_files = json.load(file)
+            for i in range(len(csv_files)):
+                csv_files[i] += '.csv'
 
-    #Carico la blacklist c he verrà aggiornata 
+    #va rivista questa parte perché carico frammetni di lista
+    data_list = []
+
+    #Carico la blacklist che verrà aggiornata 
     bl_file = os.path.join(TICKERLIST_PATH, 'bl.json')
     with open(bl_file, 'r') as f:
-        blacklist = json.load(f)
+        srv.blacklist = json.load(f)        
 
     for filename in csv_files:
         filepath = os.path.join(TICKER_PATH, filename)
         file_info = {
             'filename': filename.replace(".csv",""),
         }
+        logger.debug(f"Leggo {filepath}")
         try:
             # Leggi il file CSV
             df = pd.read_csv(filepath)
@@ -154,24 +172,48 @@ def read_ticker_csv_files():
                 msg = f"Il file {filename} è vuoto o manca la colonna 'Date'."
                 file_info['status'] = "ko"
                 file_info['log'] = msg
-                print(msg)
-                srv.blacklist.append(filename)
+                logger.debug(msg)
+                if filename not in blacklist:
+                    srv.blacklist.append(filename)
         except Exception as e:
             msg = f"Errore durante la lettura del file {filename}: {e}"
             file_info['status'] = "ko"
             file_info['log'] = msg
-            print(msg)
+            logger.debug(msg)
             if filename not in blacklist:
                 srv.blacklist.append(filename)
 
-        srv.data_list.append(file_info)
-    #Salvo la blacklist
-    with open(bl_file, 'w') as f:
-        json.dump(srv.blacklist, f, indent=4)
+        data_list.append(file_info)
+        if (file_info["filename"]) in blacklist:
+            del blacklist[file_info["filename"]]
+
+    #Metto insieme le liste globali da quelle locali
+    #prima data_list
+    if not hasattr(srv, 'data_dict'):
+        srv.data_dict = {item['filename']: item for item in srv.data_list}
+
+    # Scorri ogni elemento in data_list e aggiorna/aggiungi nel dizionario
+    for file_info in data_list:
+        srv.data_dict[file_info['filename']] = file_info
+
+    for filename in blacklist:
+        if filename in srv.data_dict:
+            del srv.data_dict[filename]
+
+    # Sincronizzare il dizionario con la lista
+    srv.data_list = list(srv.data_dict.values())
 
     # Scrive i dati nel file index.json
     with open(TICKER_FILE, 'w') as f:
         json.dump(srv.data_list, f, indent=4)
+
+    #Salvo la blacklist
+    with open(bl_file, 'w') as f:
+        logger.debug(f"BL: {srv.blacklist}")
+        json.dump(srv.blacklist, f, indent=2)
+
+    logger.debug(f"fine read_ticker_csv_files {ticker_file}")
+    update_ticker_lists()
     return srv.data_list
 
 #read_ticker_csv_files()

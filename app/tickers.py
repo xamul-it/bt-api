@@ -4,11 +4,14 @@ from app.paths import TICKER_LISTS_FILE, TICKER_PATH,  TICKERLIST_PATH
 from flask import jsonify, request, Blueprint
 from datetime import datetime
 import app.service.ticker_service as srv
+import logging
+
 
 from pytickersymbols import PyTickerSymbols
 
 
 tk_bp = Blueprint('tickers', __name__)
+logger = logging.getLogger(__name__)
 
 
 @tk_bp.route('/get-lists')
@@ -40,16 +43,6 @@ def list():
     if len(srv.data_list) == 0:
         srv.read_ticker_csv_files()
     return jsonify(srv.data_list)
-
-
-@tk_bp.route('/update')
-def update():
-    '''
-    Aggiorna i ticker
-    '''
-
-    srv.fetch_ticker_data_background()
-    return list()
 
 
 @tk_bp.route('/update-list/<list_name>', methods=['POST'])
@@ -88,7 +81,7 @@ def update_list(list_name):
 @tk_bp.route('/ticker-list/<ticker_name>')
 def get_ticker(ticker_name):
     '''
-    Restituisce la lista deio ticker contenuti in una lista
+    Restituisce i ticker contenuti in una lista
     TODO: Aggiungere la gestione per avere il dettaglio di ogni ticker
     '''
     file_path = os.path.join(TICKERLIST_PATH, f'{ticker_name}.json')
@@ -110,8 +103,11 @@ def get_ticker(ticker_name):
 @tk_bp.route('/update-tickers/<list_name>', methods=['POST'])
 def update_tickers(list_name):
     '''
-    Restituisce l'elenco dei ticker presenti in una lista
+     Aggiorna i ticker presenti in una lista, non viene agiornata la blacklist
     '''
+    logger.debug(f"LIST {list_name}")
+    if list_name == "bl":
+        return jsonify({"message": "Blacklist non aggiornabile"}), 400
     # Ottieni l'array di valori dal corpo della richiesta
     values = request.json
 
@@ -127,19 +123,18 @@ def update_tickers(list_name):
         return jsonify({"error": str(e)}), 500
 
 
-@tk_bp.route('/init')
-def init():
-    '''
-    Inizializza un nuovalista di ticker
-    '''
-    print("chiamata")
-    tic = []
-    
-    for list_name in os.listdir(TICKERLIST_PATH):
-        # Costruisci il percorso del file
-        file_path = os.path.join(TICKERLIST_PATH, f'{list_name}')
 
-        #Inizializzo la lista di ticker e la blkacklist
+@tk_bp.route('/init', defaults={'list_name': None})
+@tk_bp.route('/init/<list_name>')
+def init_tickers(list_name=None):
+    '''
+    Inizializza un nuova lista di ticker
+    '''
+    logger.debug(f"Inizializzazione {list_name}")
+    
+    def elabora_lista(list_name):
+        file_path = os.path.join(TICKERLIST_PATH, f'{list_name}')
+        #Inizializzo la lista di ticker e la blacklist
         with open(file_path, 'r') as file:
             data = json.load(file)
             for item in data:
@@ -147,36 +142,18 @@ def init():
                 with open(fullname, 'w') as file:
                     pass
                 tic.append(item)
-    
-    #Chiamata a download
-    srv.fetch_ticker_data_background()
+        #Chiamata a download
+        srv.fetch_ticker_data_background(file_path)
 
-    return jsonify({"ok": f"TODO Restrituire l'ID {file_path}","data":tic}), 200
-
-
-
-@tk_bp.route('/init/<list_name>')
-def init_tickers(list_name):
-    '''
-    Inizializza un nuovalista di ticker
-    '''
-    print("chiamata")
     tic = []
     # Costruisci il percorso del file
-    file_path = os.path.join(TICKERLIST_PATH, f'{list_name}.json')
+    if list_name is None:
+        for list_name in os.listdir(TICKERLIST_PATH):
+            elabora_lista(list_name)        
+    else:
+        elabora_lista(f"{list_name}.json")
 
-    #Inizializzo la lista di ticker e la blkacklist
-    with open(file_path, 'r') as file:
-        data = json.load(file)
-        for item in data:
-            fullname = os.path.join(f'{TICKER_PATH}', f'{item}.csv')
-            with open(fullname, 'w') as file:
-                pass
-            tic.append(item)
-    #Chiamata a download
-    srv.fetch_ticker_data_background()
-
-    return jsonify({"ok": f"TODO Restrituire l'ID {file_path}","data":tic}), 200
+    return jsonify({"ok": f"TODO Restrituire l'ID ","data":tic}), 200
 
 
 
