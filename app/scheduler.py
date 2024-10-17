@@ -272,7 +272,8 @@ def job_listener(event):
                 source_path = os.path.join(source_path, job_id)
 
                 destination_path = os.path.join(destination_path, job_id)
-                shutil.rmtree(destination_path)
+                if os.path.exists(destination_path):
+                        shutil.rmtree(destination_path)
                 shutil.move(source_path, destination_path)
 
 

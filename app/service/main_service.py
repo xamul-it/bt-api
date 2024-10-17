@@ -97,7 +97,8 @@ def load_data():
 
 
 def save_data(data):
-    if data["id"] not in runs:
+    #aggiungo l'elòemento se è valido
+    if data["id"] not in runs and "stato" in data:
         runs[data["id"]] = data
 
     filtered_runs = {key: run for key, run in runs.items() if run.get('pinned')}

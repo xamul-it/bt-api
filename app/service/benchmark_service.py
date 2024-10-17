@@ -48,6 +48,8 @@ emitter = EventEmitter()
 
 def copy_benchmark(data):
     print(f"Finito {data}")
+    if not "stato" in data:
+        return
     if data["stato"] == "Completato" and "benchmark" in data["args"]:
         print("EUREKKA")
         infile = os.path.join(OUT_PATH, "BuyAndHold", data["id"], "returns.csv")

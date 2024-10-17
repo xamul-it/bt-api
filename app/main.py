@@ -112,6 +112,14 @@ def pin_switch():
 @mn.route('/delete', methods=['POST'])
 def delete():
     id = request.get_json().get('id')
+    if id not in srv.runs:
+        return jsonify({'message': 'Data missing '}),500        
+    r = srv.runs[id]
     del srv.runs[id]
+    if r["pinned"]:
+        path = os.path.join(DATA_PATH,f"{id}.json")
+        os.remove(path)
+
+
     event_emitter.emit(EventEmitter.EV_UPDATED_RUNS,request.get_json())
-    return jsonify({'message': 'Data updated successfully'})
+    return jsonify({'message': 'Data successfully deleted'})
