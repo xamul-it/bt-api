@@ -44,11 +44,12 @@ def update_ticker_lists():
     # Trasformiamo data_list in un set di filename per una ricerca più efficiente
     
     filenames_in_data_list = {item['filename'] for item in data_list if item['status'] == 'ok'}
-    print(f"Inizio Elabolo la lista {filenames_in_data_list}")
     for filename in os.listdir(TICKERLIST_PATH):
+        if filename.endswith("index.json"):
+            continue
         if filename.endswith(".json"):
             file_path = os.path.join(TICKERLIST_PATH, filename)
-            try:
+            try:    
                 with open(file_path, 'r') as file:
                     data = json.load(file)
 
@@ -142,12 +143,7 @@ def read_ticker_csv_files(ticker_file=None):
                 csv_files[i] += '.csv'
 
     #va rivista questa parte perché carico frammetni di lista
-    data_list = []
-
-    #Carico la blacklist che verrà aggiornata 
-    bl_file = os.path.join(TICKERLIST_PATH, 'bl.json')
-    with open(bl_file, 'r') as f:
-        srv.blacklist = json.load(f)        
+    data_list = []       
 
     for filename in csv_files:
         filepath = os.path.join(TICKER_PATH, filename)
@@ -206,11 +202,6 @@ def read_ticker_csv_files(ticker_file=None):
     # Scrive i dati nel file index.json
     with open(TICKER_FILE, 'w') as f:
         json.dump(srv.data_list, f, indent=4)
-
-    #Salvo la blacklist
-    with open(bl_file, 'w') as f:
-        logger.debug(f"BL: {srv.blacklist}")
-        json.dump(srv.blacklist, f, indent=2)
 
     logger.debug(f"fine read_ticker_csv_files {ticker_file}")
     update_ticker_lists()

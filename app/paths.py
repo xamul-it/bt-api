@@ -10,19 +10,18 @@ current_directory = os.path.dirname(current_file_path)
 # Root path sarà il percorso della directory superiore
 root_path = os.path.abspath(os.path.join(current_directory, '..'))
 
+# Percorso relativo al file JSON
+CONFIG_PATH = os.path.join(root_path,  'config')
 
-TICKER_PATH = os.path.join(root_path,  'data')
+TICKER_PATH = os.path.join(CONFIG_PATH,  'data')
 
-TICKERLIST_PATH = os.path.join(root_path,  'tickers')
+TICKERLIST_PATH = os.path.join(CONFIG_PATH,  'tickers')
 
 # Percorso relativo al file JSON
 OUT_PATH = os.path.join(root_path,  'out')
 
 # Percorso relativo al file JSON
-CONFIG_PATH = os.path.join(root_path,  'config')
-
-# Percorso relativo al file JSON
-BENCHMARK_PATH = os.path.join(root_path,  'benchmark')
+BENCHMARK_PATH = os.path.join(CONFIG_PATH,  'benchmark')
 
 # Percorso relativo al file JSON
 DATA_PATH = os.path.join(CONFIG_PATH,  'stored')
