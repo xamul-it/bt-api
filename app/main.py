@@ -37,8 +37,7 @@ def stato_chiamate():
     try:
         return jsonify(list(srv.runs.values()))
     except Exception as e:
-        print(e)
-        print(srv.runs)
+        logger.exception(srv.runs)
         return "Errore"
 
 @mn.route('/clear', methods=['GET'])
@@ -102,7 +101,7 @@ def pin_switch():
     destination_path = os.path.join(destination_path, strategy)
     destination_path = os.path.join(destination_path, id)
 
-    print(f"{source_path}-- {destination_path}")
+    logger.debug(f"{source_path}-- {destination_path}")
     # Move the folder using shutil.move()
     shutil.move(source_path, destination_path)
     r["pinned"] = not r["pinned"]

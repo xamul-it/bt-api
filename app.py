@@ -14,8 +14,18 @@ from app.main import mn
 import logging
 
 
+# Leggi il livello di logging dalla variabile di ambiente, default a 'INFO'
+log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
+
+# Assicurati che il livello di log sia valido
+numeric_level = getattr(logging, log_level, None)
+if not isinstance(numeric_level, int):
+    raise ValueError(f'Invalid log level: {log_level}')
+
 # Configurazione di base del logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=numeric_level)
+
+
 
 #sys.path.append('../')  # Aggiusta il percorso in base alla tua struttura di cartelle
 

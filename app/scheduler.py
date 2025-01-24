@@ -79,8 +79,7 @@ def load_jobs(data=None):
                     scheduler.add_job(mn_srv.runstrat, trigger=trigger, id=id, args=[args], replace_existing=True)
     
                 except Exception  as e:
-                    print(f"Errore nel parsing del file {filename}: {e}")
-                    traceback.print_exc()
+                    logger.exception(f"Errore nel parsing del file {filename}")
     #return jsonify("ok")
 
 
@@ -112,7 +111,7 @@ def load_jobs_from_json():
             scheduler.add_job(func, trigger=eval(job_data['trigger']), id=job_data['id'],
                               next_run_time=job_data['next_run_time'])
     except FileNotFoundError:
-        print("No jobs to load.")
+        logger.exception("No jobs to load.")
 
 
 # Definisci la route per ottenere l'elenco dei job

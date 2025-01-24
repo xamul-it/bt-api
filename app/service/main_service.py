@@ -59,7 +59,7 @@ def runstrat_background( data, args=[]):
     thread = Thread(target=btrunstrat, args=(tdata, args))
     # Invoca runstrat con gli argomenti convertiti
     thread.start()
-    print(f"Emetto segnale")
+    logger.debug(f"Emetto segnale")
     emitter.emit(emitter.EV_UPDATED_RUNS,tdata)
     return tdata
 
@@ -70,7 +70,7 @@ def btrunstrat(data, args=[]):
         data["start"] = int(datetime.now().timestamp() * 1000)
         runstrat(args=args) 
     except Exception as e:
-        print(traceback.print_exception(e))
+        logger.exception("Errore nell'eseguire la strategia")
         data["stato"] = "Errore"
         data["errorMessage"] = f"{e}"
         emitter.emit(emitter.EV_UPDATED_RUNS, data)
@@ -78,7 +78,7 @@ def btrunstrat(data, args=[]):
         data["stato"] = "Completato"
         data["end"] = int(datetime.now().timestamp() * 1000)
         emitter.emit(emitter.EV_UPDATED_RUNS, data)
-        print("Fine elaborazione")
+        logger.debug("Fine elaborazione")
 
 
 # Struttura dati per tenere traccia delle chiamate attive

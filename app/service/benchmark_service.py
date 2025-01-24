@@ -4,16 +4,18 @@ import json
 import app.service.ticker_service as srv
 import app.service.main_service as mn_srv
 import csv
+import logging
 from app.service.EventEmitter import EventEmitter
 from app.paths import BENCHMARK_PATH, OUT_PATH, BENCHMARK_FILE
 
 srv.benchmark = []
+logger = logging.getLogger(__name__)
 
 def create_index_file(benchmark_path,json_file_path):
     # Genera una lista di dizionari per ogni file nella cartella benchmark
     srv.benchmark = []
     for filename in os.listdir(benchmark_path):
-        print(filename)
+        logger.debug(filename)
         if filename.endswith(".csv") and filename != "index.json":
             file_path = os.path.join(benchmark_path, filename)
             with open(file_path, newline='') as csvfile:
@@ -47,14 +49,14 @@ def read_csv_to_json(filename):
 emitter = EventEmitter()
 
 def copy_benchmark(data):
-    print(f"Finito {data}")
+    logger.debug(f"Finito {data}")
     if not "stato" in data:
         return
     if data["stato"] == "Completato" and "benchmark" in data["args"]:
-        print("EUREKKA")
+        logger.debug("EUREKKA")
         infile = os.path.join(OUT_PATH, "BuyAndHold", data["id"], "returns.csv")
         outfile = os.path.join(BENCHMARK_PATH, data["args"]["tickerList"]["value"].split('.')[0]+".csv")
-        print(outfile)
+        logger.debug(outfile)
         shutil.copyfile(infile,outfile)
         create_index_file(BENCHMARK_PATH, BENCHMARK_FILE)
 

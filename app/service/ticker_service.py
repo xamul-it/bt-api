@@ -76,7 +76,7 @@ def update_ticker_lists():
     with open(TICKER_LISTS_FILE, 'w') as f:
         json.dump(tickers, f, indent=4)
     #data = json.load(file)
-    print(tickers)
+    logger.debug(tickers)
 
 fetchlist={}
 
@@ -114,7 +114,7 @@ def fetch_ticker_data(ticker_file=TICKER_FILE):
                     stock =  yf.download(name, progress=False, actions=True, period="max", interval="1d", session=session)
                     break
                 except Exception as e:
-                    print(f"errore nel caricamento di {name}: {e}")
+                    logger.exception(f"errore nel caricamento di {name}")
                     if attempt < retries:
                         time.sleep(delay)  # Attendi prima di riprovare
             logger.debug(f'done {name}')

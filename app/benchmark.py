@@ -5,12 +5,15 @@ import app.service.benchmark_service as srv
 import app.service.main_service as mn_srv
 from uuid import uuid4
 from app.paths import BENCHMARK_PATH, BENCHMARK_FILE, TICKERLIST_PATH, OUT_PATH
+import logging
 
 bm_bp = Blueprint('benckmark', __name__)
 
 @bm_bp.route('/')
 def home():
     return "Ciao, mondo!"
+
+logger = logging.getLogger(__name__)
 
 @bm_bp.route('/get-benchmarks')
 def get_benchmarks():
@@ -46,15 +49,15 @@ def get_benchmark(name):
 @bm_bp.route('/update')
 def benchmarks():
     data = []
-    print("_______________________________Benchmark")
+    logger.info("_______________________________Benchmark")
     for root, dirs, files in os.walk(TICKERLIST_PATH):
         for file in files:
-            print(file)
+            logger.info(file)
             list_name= file.split('.')[0]
-            print(list_name)
+            logger.info(list_name)
             benchmark(list_name)
             data.append(list_name)
-    print("_______________________________Benchmark")
+    logger.info("_______________________________Benchmark")
     # Rispondi al frontend
     return jsonify({"status": "success", "message": "Dati ricevuti con successo","Dati":data})
 
