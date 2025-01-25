@@ -124,9 +124,6 @@ def fetch_ticker_data(ticker_file=TICKER_FILE):
             # Appiattisci il MultiIndex sulle colonne
             stock.columns = stock.columns.get_level_values(0)
             fullname = os.path.join(f'{TICKER_PATH}', f'{name}.csv')
-            logger.debug(stock.head())  # Debug: visualizza le prime righe del DataFrame
-            logger.debug(stock.dtypes)
-            logger.debug(stock.shape)
             stock.to_csv(fullname,sep = ',', decimal=".", header=True, index=True)
     logger.debug(f"Genero evento :{ticker_file}")
     emitter.emit(emitter.EV_TICKER_FETCHED,ticker_file)
@@ -146,8 +143,12 @@ def read_ticker_csv_files(ticker_file=None):
         csv_files = []
         with open(ticker_file, 'r') as file:
             csv_files = json.load(file)
-        for i in range(len(csv_files)):
-            csv_files[i] += '.csv'
+            # Assumi che data sia una lista di stringhe
+            if all(isinstance(item, str) for item in data):
+                csv_files = [item + '.csv' for item in data]
+            else:
+                logger.error("JSON file format is incorrect: expected a list of strings")
+                return []
 
     #va rivista questa parte perché carico frammetni di lista
     data_list = []       
