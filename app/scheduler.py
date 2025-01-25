@@ -43,7 +43,7 @@ IMMEDIATE="_immediate"
 
 # Schedula il job di caricamento ticker
 #scheduler.add_job(tk_srv.fetch_ticker_data, 'interval', hours=24, start_date=datetime.now() + timedelta(seconds=10), id='Tickers list')
-scheduler.add_job(tk_srv.fetch_ticker_data,CronTrigger(hour='8-23', minute=0),
+scheduler.add_job(tk_srv.fetch_ticker_data,CronTrigger(hour='20', minute=0),
                         id='TickersList', replace_existing=True)
 #scheduler.add_job(tk_srv.read_ticker_csv_files, 'interval', hours=24, start_date=datetime.now() + timedelta(seconds=10), id='Tickers list')
 
@@ -250,7 +250,7 @@ lock = threading.Lock()
 # Listener per intercettare quando un job è completato o fallisce
 def job_listener(event):
     with lock: #devo evitare copie sovrapposte
-        logger.error("-----------------------------------")
+        logger.info("-----------------------------------")
         if event.exception:
             logger.debug(f"Il job {event.job_id} ha generato un'eccezione")
 

@@ -109,18 +109,25 @@ def fetch_ticker_data(ticker_file=TICKER_FILE):
             # download ticker ‘Adj Close’ price from yahoo finance
             retries=3
             delay=5
+            stock=None
             for attempt in range(1, retries + 1):
                 try:
                     stock =  yf.download(name, progress=False, actions=True, period="max", interval="1d", session=session)
+                    if 'Date' in stock.columns:
+                        stock.set_index('Date', inplace=True)
                     break
                 except Exception as e:
                     logger.exception(f"errore nel caricamento di {name}")
                     if attempt < retries:
                         time.sleep(delay)  # Attendi prima di riprovare
             logger.debug(f'done {name}')
-
+            # Appiattisci il MultiIndex sulle colonne
+            stock.columns = stock.columns.get_level_values(0)
             fullname = os.path.join(f'{TICKER_PATH}', f'{name}.csv')
-            stock.to_csv(fullname,sep = ',', decimal=".")
+            logger.debug(stock.head())  # Debug: visualizza le prime righe del DataFrame
+            logger.debug(stock.dtypes)
+            logger.debug(stock.shape)
+            stock.to_csv(fullname,sep = ',', decimal=".", header=True, index=True)
     logger.debug(f"Genero evento :{ticker_file}")
     emitter.emit(emitter.EV_TICKER_FETCHED,ticker_file)
 
@@ -139,8 +146,8 @@ def read_ticker_csv_files(ticker_file=None):
         csv_files = []
         with open(ticker_file, 'r') as file:
             csv_files = json.load(file)
-            for i in range(len(csv_files)):
-                csv_files[i] += '.csv'
+        for i in range(len(csv_files)):
+            csv_files[i] += '.csv'
 
     #va rivista questa parte perché carico frammetni di lista
     data_list = []       

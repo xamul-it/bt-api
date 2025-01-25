@@ -12,6 +12,7 @@ import sys
 
 from app.main import mn
 import logging
+import warnings
 
 
 # Leggi il livello di logging dalla variabile di ambiente, default a 'INFO'
@@ -22,11 +23,17 @@ numeric_level = getattr(logging, log_level, None)
 if not isinstance(numeric_level, int):
     raise ValueError(f'Invalid log level: {log_level}')
 
+
+if log_level != "DEBUG":
+    # Ignora tutti i FutureWarning
+    warnings.simplefilter(action='ignore', category=FutureWarning)
+
+
 # Configurazione di base del logging
 logging.basicConfig(level=numeric_level)
 
 
-
+logging.error(f"{log_level} : {os.getenv('LOG_LEVEL')}")
 #sys.path.append('../')  # Aggiusta il percorso in base alla tua struttura di cartelle
 
 app = Flask(__name__)
@@ -72,4 +79,4 @@ def home():
 
 
 if __name__ == '__main__':
-    app.run(port=5001, debug=True)
+    app.run(port=5001, debug=True, host="0.0.0.0")
