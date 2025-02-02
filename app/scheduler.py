@@ -29,8 +29,8 @@ emitter = EventEmitter()
 
 # Configura l'esecutore con un massimo di 2 thread (limite al parallelismo)
 executors = {
-    'default': ThreadPoolExecutor(2),  # Limita a 2 job paralleli
-    'processpool': ProcessPoolExecutor(1)  # Limita ulteriormente i job pesanti
+    'default': ThreadPoolExecutor(20),  # Limita a 2 job paralleli
+    #'processpool': ProcessPoolExecutor(1)  # Limita ulteriormente i job pesanti
 }
 
 # Crea lo scheduler con l'esecutore personalizzato
@@ -44,7 +44,7 @@ IMMEDIATE="_immediate"
 # Schedula il job di caricamento ticker
 #scheduler.add_job(tk_srv.fetch_ticker_data, 'interval', hours=24, start_date=datetime.now() + timedelta(seconds=10), id='Tickers list')
 scheduler.add_job(tk_srv.fetch_ticker_data,CronTrigger(hour='20', minute=0),
-                        id='TickersList', replace_existing=True)
+                        id='TickersList', replace_existing=True,max_instances=1)
 #scheduler.add_job(tk_srv.read_ticker_csv_files, 'interval', hours=24, start_date=datetime.now() + timedelta(seconds=10), id='Tickers list')
 
 def load_jobs(data=None):
@@ -76,7 +76,7 @@ def load_jobs(data=None):
                     #trigger=DateTrigger(run_date=datetime.now())
                     logger.debug(f"Avvio schedulazioni {id}:{trigger}:{args}")
                     # Sovrascrive il job esistente con lo stesso id)
-                    scheduler.add_job(mn_srv.runstrat, trigger=trigger, id=id, args=[args], replace_existing=True)
+                    scheduler.add_job(mn_srv.runstrat, trigger=trigger, id=id, args=[args], replace_existing=True, max_instances=1)
     
                 except Exception  as e:
                     logger.exception(f"Errore nel parsing del file {filename}")
@@ -109,7 +109,9 @@ def load_jobs_from_json():
             mod = __import__(module_name, fromlist=[func_name])
             func = getattr(mod, func_name)
             scheduler.add_job(func, trigger=eval(job_data['trigger']), id=job_data['id'],
-                              next_run_time=job_data['next_run_time'])
+                              next_run_time=job_data['next_run_time'], max_instances=1,
+                              misfire_grace_time=1200
+)
     except FileNotFoundError:
         logger.exception("No jobs to load.")
 
@@ -148,7 +150,8 @@ def list_jobs():
             'next_run_time': next_run_time,
             'trigger': str(job.trigger),
             'function': getattr(job.func, '__name__', repr(job.func)),
-            'args': str(job.args)
+            'args': str(job.args),
+            "status": job_event_cache.get(job.id, "NA") 
         }
         jobs_list.append(job_info)
     
@@ -212,8 +215,9 @@ def run_job(job_id):
                 job.func, 
                 trigger=immediate_trigger,  # Esecuzione immediata
                 args=job.args, 
-                kwargs=job.kwargs, 
-                id=f"{job_id}{IMMEDIATE}"
+                kwargs=job.kwargs,
+                id=f"{job_id}{IMMEDIATE}",
+                max_instances=1
             )
 
         emitter.emit(EventEmitter.EV_SCHEDULER)
@@ -246,16 +250,17 @@ def update_job():
 
 # Crea un lock globale
 lock = threading.Lock()
-
+job_event_cache = {}
 # Listener per intercettare quando un job è completato o fallisce
 def job_listener(event):
     with lock: #devo evitare copie sovrapposte
-        logger.info("-----------------------------------")
-        if event.exception:
-            logger.debug(f"Il job {event.job_id} ha generato un'eccezione")
+        logger.info(f"Event for {event.job_id} - {event.code}")
+        job_event_cache[event.job_id] = event.code
+        if event.code == EVENT_JOB_ERROR:
+            logger.error(f"Il job {event.job_id} ha generato un'eccezione")
 
-        else:
-            logger.debug(f"Il job {event.job_id} è stato completato con successo")
+        elif event.code == EVENT_JOB_EXECUTED:
+            logger.info(f"Il job {event.job_id} è stato completato con successo")
             source_path = OUT_PATH
             destination_path = SCHEDULE_PATH
 
@@ -280,5 +285,5 @@ def job_listener(event):
 
 
 # Aggiungi il listener per intercettare gli eventi di completamento dei job
-scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
+scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR |EVENT_JOB_MISSED | EVENT_JOB_SUBMITTED)
 emitter.on(emitter.EV_SCHEDULER, load_jobs)
