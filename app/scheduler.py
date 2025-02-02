@@ -255,7 +255,15 @@ job_event_cache = {}
 def job_listener(event):
     with lock: #devo evitare copie sovrapposte
         logger.info(f"Event for {event.job_id} - {event.code}")
-        job_event_cache[event.job_id] = event.code
+        if event.code == EVENT_JOB_EXECUTED:
+            job_event_cache[event.job_id] = 'executed'
+        elif event.code == EVENT_JOB_ERROR:
+            job_event_cache[event.job_id] = 'error'
+        elif event.code == EVENT_JOB_MISSED:
+            job_event_cache[event.job_id] = 'missed'
+        elif event.code == EVENT_JOB_SUBMITTED:
+            job_event_cache[event.job_id] = 'submitted'
+
         if event.code == EVENT_JOB_ERROR:
             logger.error(f"Il job {event.job_id} ha generato un'eccezione")
 
