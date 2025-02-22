@@ -43,8 +43,9 @@ IMMEDIATE="_immediate"
 
 # Schedula il job di caricamento ticker
 #scheduler.add_job(tk_srv.fetch_ticker_data, 'interval', hours=24, start_date=datetime.now() + timedelta(seconds=10), id='Tickers list')
-scheduler.add_job(tk_srv.fetch_ticker_data,CronTrigger(hour='20', minute=0),
-                        id='TickersList', replace_existing=True,max_instances=1)
+#TODO mettere una doppia schedulazione per alpaca e yahoo
+#scheduler.add_job(tk_srv.fetch_ticker_data,CronTrigger(hour='20', minute=0),
+#                        id='TickersList', replace_existing=True,max_instances=1)
 #scheduler.add_job(tk_srv.read_ticker_csv_files, 'interval', hours=24, start_date=datetime.now() + timedelta(seconds=10), id='Tickers list')
 
 def load_jobs(data=None):

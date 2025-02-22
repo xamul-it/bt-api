@@ -2,6 +2,7 @@ import os
 import json
 from datetime import datetime
 from threading import Thread, current_thread
+import threading
 import yfinance as yf
 import requests
 import urllib3
@@ -10,6 +11,9 @@ import app.service.ticker_service as srv
 from app.service.EventEmitter import EventEmitter
 from app.paths import TICKER_LISTS_FILE, TICKER_PATH, TICKER_FILE, CONFIG_PATH, TICKERLIST_PATH, OUT_PATH, BENCHMARK_PATH
 from app.service.EventEmitter import EventEmitter
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame
 import time
 import logging
 
@@ -20,11 +24,11 @@ blacklist = []
 emitter = EventEmitter()
 logger = logging.getLogger(__name__)
 
-def get_ticker_lists():
+def get_ticker_lists(force='False'):
     '''
     Restituisce la lista delle liste ticker
     '''
-    if not os.path.isfile(TICKER_LISTS_FILE):
+    if not os.path.isfile(TICKER_LISTS_FILE) or force!='False':
         # Genera una lista di dizionari per ogni file nella cartella tickers
         update_ticker_lists()
 
@@ -45,8 +49,6 @@ def update_ticker_lists():
     
     filenames_in_data_list = {item['filename'] for item in data_list if item['status'] == 'ok'}
     for filename in os.listdir(TICKERLIST_PATH):
-        if filename.endswith("index.json"):
-            continue
         if filename.endswith(".json"):
             file_path = os.path.join(TICKERLIST_PATH, filename)
             try:    
@@ -62,7 +64,7 @@ def update_ticker_lists():
             stats = os.stat(file_path)
             old_list = [lista for lista  in old if lista['name'] == filename[:-5]]
             old_list = None if len(old_list) == 0 else old_list[0]
-                    
+            provider = old_list["provider"] if "provider" in old_list else "yahoo"
             tickers.append({
                     'name': filename[:-5],
                     'created': datetime.fromtimestamp(stats.st_ctime).strftime('%Y-%m-%d %H:%M:%S') if old_list is None else old_list["created"],
@@ -70,7 +72,8 @@ def update_ticker_lists():
                     'num': num_items,
                     'valid': valid,
                     'avatar': '' if old_list is None else old_list["avatar"] ,
-                    'des': filename if old_list is None else old_list["des"]
+                    'des': filename if old_list is None else old_list["des"] ,
+                    'provider': provider ,
                 })
     # Scrive i dati nel file index.json
     with open(TICKER_LISTS_FILE, 'w') as f:
@@ -80,14 +83,91 @@ def update_ticker_lists():
 
 fetchlist={}
 
-def fetch_ticker_data_background(ticker_file=TICKER_FILE):
+def fetch_ticker_data_background(ticker_file=TICKER_FILE, provider='yahoo'):
     '''
     Aggiorna i dati dei ticker in background
     '''
-    thread = Thread(target=fetch_ticker_data, args=(ticker_file,))
+    if provider=='yahoo':
+        thread = Thread(target=fetch_yahoo_data, args=(ticker_file,))
+    elif provider=='alpaca':
+        thread = Thread(target=fetch_alpaca_data, args=(ticker_file,))
     thread.start()
 
-def fetch_ticker_data(ticker_file=TICKER_FILE):
+
+def fetch_alpaca_data(ticker_file):
+    print(f"avvio caricamento {ticker_file}")
+    # Inserisci qui le tue credenziali Alpaca
+    API_KEY = 'PK1IIXGVGZSTZVYZ713C'
+    SECRET_KEY = '6EOmUlS8pSaJk7ZNhZVf5eodjFWeMlw0TWJUdhY9'
+
+    # Inizializza il client per i dati storici
+    client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
+    client._session.verify=False
+    # Lista dei simboli dei titoli da scaricare
+
+
+    with open(ticker_file, 'r') as file:
+        tickers = json.load(file)
+
+    # Definisci l'intervallo temporale desiderato
+    start_date = datetime(2000, 1, 1)
+    end_date   = datetime.now()
+
+
+    # Prepara la richiesta per ottenere i daily bars per tutti i ticker insieme
+    request_params = StockBarsRequest(
+        symbol_or_symbols=tickers,
+        timeframe=TimeFrame.Day,
+        start=start_date,
+        end=end_date
+    )
+    
+    # Effettua la richiesta asincrona
+    bars = client.get_stock_bars(request_params)
+    
+    # Ottieni il DataFrame; in questo caso l'indice sarà un MultiIndex:
+    # livello 0 = ticker, livello 1 = data
+    df = bars.df
+    if df is not None and not df.empty:
+        # Per ciascun ticker, estrai i dati e salva in un CSV
+        for ticker in tickers:
+            try:
+                # Seleziona i dati relativi al ticker: il risultato avrà l'indice che ora è solo la data
+                df_ticker = df.loc[ticker]
+                # Per sicurezza, resetta l'indice così da avere una colonna 'datetime'
+                df_ticker = df_ticker.reset_index()
+
+                # Converte la colonna 'timestamp' in formato data (senza orario)
+                if 'timestamp' in df_ticker.columns:
+                    df_ticker['timestamp'] = pd.to_datetime(df_ticker['timestamp']).dt.date
+
+                # Se non ti serve la colonna del ticker (in quanto il file è specifico per quel ticker), puoi eliminarla se presente:
+                if 'symbol' in df_ticker.columns:
+                    df_ticker.drop(columns=['symbol'], inplace=True)
+                # Salva il DataFrame in un file CSV
+                csv_filename = f"config/data/{ticker}.csv"
+                df_ticker.to_csv(csv_filename, index=False)
+                print(f"Salvate le quotazioni di {ticker} in {csv_filename}")
+            except KeyError:
+                print(f"Nessun dato ricevuto per il ticker {ticker}")
+    else:
+        print("Nessun dato restituito da Alpaca")
+
+def find_list_by_name(name):
+    '''
+    recupera dei  descrittori dei ticker la lista col nome specificato
+    '''
+    with open(TICKER_LISTS_FILE,'r') as file:
+        data = json.load(file)
+        for item in data:
+            if item['name'] == name:
+                return item
+        return None  # Restituisce None se non trova alcun elemento con il nome specificato
+
+# Creazione del lock
+lock = threading.Lock()
+
+def fetch_yahoo_data(ticker_file=TICKER_FILE):
     '''
     Aggiorna tutti i ticker presenti nella cartella
     Attenzione al parametro, 
@@ -95,36 +175,27 @@ def fetch_ticker_data(ticker_file=TICKER_FILE):
     logger.debug(f"fetch file:{ticker_file}")
     with open(ticker_file, 'r') as file:
         ticker = json.load(file)
-        for item in ticker:
-            # Crea una sessione personalizzata
-            session = requests.Session()
-            session.verify = False  # Disabilita la verifica del certificato
-            urllib3.disable_warnings()
-            requests.packages.urllib3.disable_warnings() 
-
-            if ticker_file==TICKER_FILE:
-                name=item["filename"]
-            else: 
-                name=item
-            # download ticker ‘Adj Close’ price from yahoo finance
-            retries=3
-            delay=5
-            stock=None
-            for attempt in range(1, retries + 1):
-                try:
-                    stock =  yf.download(name, progress=False, actions=True, period="max", interval="1d", session=session)
-                    if 'Date' in stock.columns:
-                        stock.set_index('Date', inplace=True)
-                    break
-                except Exception as e:
-                    logger.exception(f"errore nel caricamento di {name}")
-                    if attempt < retries:
-                        time.sleep(delay)  # Attendi prima di riprovare
-            logger.debug(f'done {name}')
-            # Appiattisci il MultiIndex sulle colonne
-            stock.columns = stock.columns.get_level_values(0)
-            fullname = os.path.join(f'{TICKER_PATH}', f'{name}.csv')
-            stock.to_csv(fullname,sep = ',', decimal=".", header=True, index=True)
+        # Crea una sessione personalizzata
+        session = requests.Session()
+        session.verify = False  # Disabilita la verifica del certificato
+        urllib3.disable_warnings()
+        requests.packages.urllib3.disable_warnings() 
+        with lock:
+            stocks =  yf.download(ticker, progress=False, actions=True, period="max", interval="1d", session=session)
+            print(yf.warnings)
+        unique_tickers = stocks.columns.get_level_values('Ticker').unique()
+        # Cicla su ciascun ticker e salva i relativi dati in un file CSV
+        for ticker in unique_tickers:
+            # Filtra il DataFrame per conservare solo le colonne relative a quel ticker
+            data_for_ticker = stocks.xs(ticker, level='Ticker', axis=1)
+            data_for_ticker = data_for_ticker.dropna()
+            # Costruisci il nome del file usando il ticker
+            filename = os.path.join(f'{TICKER_PATH}', f'{ticker}.csv')
+            
+            # Salva il DataFrame filtrato in un file CSV
+            data_for_ticker.to_csv(filename,sep = ',', decimal=".", header=True, index=True)
+            #stock.to_csv(fullname,sep = ',', decimal=".", header=True, index=True)
+         
     logger.debug(f"Genero evento :{ticker_file}")
     emitter.emit(emitter.EV_TICKER_FETCHED,ticker_file)
 
@@ -142,7 +213,7 @@ def read_ticker_csv_files(ticker_file=None):
     else:
         csv_files = []
         with open(ticker_file, 'r') as file:
-            csv_files = json.load(file)
+            data = json.load(file)
             # Assumi che data sia una lista di stringhe
             if all(isinstance(item, str) for item in data):
                 csv_files = [item + '.csv' for item in data]
@@ -218,5 +289,6 @@ def read_ticker_csv_files(ticker_file=None):
 #read_ticker_csv_files()
 
 emitter.on(emitter.EV_TICKER_FETCHED,read_ticker_csv_files)
-emitter.on(emitter.EV_TICKER_CHANGED,fetch_ticker_data)
+#TODO Sistemare perché deve aggiornare le lsite alpaca o yahoo
+#emitter.on(emitter.EV_TICKER_CHANGED,fetch_ticker_data)
 emitter.on(emitter.EV_TICKERLIST_CHANGE,get_ticker_lists)

@@ -36,6 +36,11 @@ def json2args(operation_id,data):
     args.append(f'{data["tipoCommissioni"]["value"]}')
     args.append(f'--ticker')
     args.append(f'{data["tickerList"]["value"]}.json')
+    
+    if "broker" in data:
+        args.append(f'--broker')
+        args.append(f'{data["broker"]["value"]}')
+
 
     args.append(f'--benchmark')
     args.append(f'{data["tickerList"]["value"]}')
@@ -87,13 +92,16 @@ runs = {}
 def load_data():
     # Iterare su tutti i file nella cartella
     for filename in os.listdir(DATA_PATH):
-        if filename.endswith('.json'):  # Verificare che il file sia un JSON
-            file_path = os.path.join(DATA_PATH, filename)
-            
-            # Aprire il file JSON e caricarne i dati
-            with open(file_path, 'r', encoding='utf-8') as json_file:
-                data = json.load(json_file)
-                runs.update(data)
+        try:
+            if filename.endswith('.json'):  # Verificare che il file sia un JSON
+                file_path = os.path.join(DATA_PATH, filename)
+                
+                # Aprire il file JSON e caricarne i dati
+                with open(file_path, 'r', encoding='utf-8') as json_file:
+                    data = json.load(json_file)
+                    runs.update(data)
+        except:
+            logger.warning(f"Il file {filename} non può essere caricato e viene saltato")
 
 
 def save_data(data):
