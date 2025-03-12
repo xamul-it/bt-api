@@ -11,9 +11,10 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.executors.pool import ProcessPoolExecutor, ThreadPoolExecutor
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED, EVENT_JOB_SUBMITTED
 from apscheduler.triggers.date import DateTrigger
+from apscheduler.schedulers.base import STATE_STOPPED, STATE_RUNNING, STATE_PAUSED
 import time
 from datetime import datetime
-import app.service.ticker_service as tk_srv
+import app.tickers as tk_srv
 import app.service.main_service as mn_srv
 import json
 from datetime import datetime, timedelta
@@ -37,15 +38,16 @@ executors = {
 scheduler = BackgroundScheduler(executors=executors)
 
 scheduler.start()
-#scheduler.pause()
+scheduler.pause()
 
 IMMEDIATE="_immediate"
 
 # Schedula il job di caricamento ticker
-#scheduler.add_job(tk_srv.fetch_ticker_data, 'interval', hours=24, start_date=datetime.now() + timedelta(seconds=10), id='Tickers list')
-#TODO mettere una doppia schedulazione per alpaca e yahoo
-#scheduler.add_job(tk_srv.fetch_ticker_data,CronTrigger(hour='20', minute=0),
-#                        id='TickersList', replace_existing=True,max_instances=1)
+#scheduler.add_job(tk_srv.init_tickers(), 'interval', hours=24, start_date=datetime.now() + timedelta(seconds=10), 
+#                  id='Tickers list')
+
+scheduler.add_job(tk_srv.init_tickers, CronTrigger(hour='20', minute=0), id='TickersList', replace_existing=True, 
+                  max_instances=1)
 #scheduler.add_job(tk_srv.read_ticker_csv_files, 'interval', hours=24, start_date=datetime.now() + timedelta(seconds=10), id='Tickers list')
 
 def load_jobs(data=None):
@@ -160,21 +162,20 @@ def list_jobs():
 
 @sc_bp.route('/status')
 def scheduler_status():
-    if scheduler.running:
+    if scheduler.state == STATE_RUNNING:
         return jsonify({'status': 'running'})
     else:
         return jsonify({'status': 'stopped'})
     
 @sc_bp.route('/stop', methods=['POST'])
 def stop_scheduler():
-    #scheduler.shutdown(wait=False)
     scheduler.pause()
     return jsonify({'message': 'Scheduler stopped successfully'})
 
 @sc_bp.route('/start', methods=['POST'])
 def start_scheduler():
-    if not scheduler.running:
-        scheduler.start()
+    if scheduler.state == STATE_PAUSED:
+        scheduler.resume()
         return jsonify({'message': 'Scheduler started successfully'})
     return jsonify({'message': 'Scheduler is already running'})
 

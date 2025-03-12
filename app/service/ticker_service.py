@@ -95,7 +95,7 @@ def fetch_ticker_data_background(ticker_file=TICKER_FILE, provider='yahoo'):
 
 
 def fetch_alpaca_data(ticker_file):
-    print(f"avvio caricamento {ticker_file}")
+    logger.debug(f"avvio caricamento {ticker_file}")
     # Inserisci qui le tue credenziali Alpaca
     API_KEY = 'PK1IIXGVGZSTZVYZ713C'
     SECRET_KEY = '6EOmUlS8pSaJk7ZNhZVf5eodjFWeMlw0TWJUdhY9'
@@ -147,11 +147,11 @@ def fetch_alpaca_data(ticker_file):
                 # Salva il DataFrame in un file CSV
                 csv_filename = f"config/data/{ticker}.csv"
                 df_ticker.to_csv(csv_filename, index=False)
-                print(f"Salvate le quotazioni di {ticker} in {csv_filename}")
+                logger.debug(f"Salvate le quotazioni di {ticker} in {csv_filename}")
             except KeyError:
-                print(f"Nessun dato ricevuto per il ticker {ticker}")
+                logger.debug(f"Nessun dato ricevuto per il ticker {ticker}")
     else:
-        print("Nessun dato restituito da Alpaca")
+        logger.debug("Nessun dato restituito da Alpaca")
 
 def find_list_by_name(name):
     '''
@@ -182,7 +182,7 @@ def fetch_yahoo_data(ticker_file=TICKER_FILE):
         requests.packages.urllib3.disable_warnings() 
         with lock:
             stocks =  yf.download(ticker, progress=False, actions=True, period="max", interval="1d", session=session)
-            print(yf.warnings)
+            logger.warning(f'{ticker_file}: {yf.warnings}')
         unique_tickers = stocks.columns.get_level_values('Ticker').unique()
         # Cicla su ciascun ticker e salva i relativi dati in un file CSV
         for ticker in unique_tickers:

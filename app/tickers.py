@@ -142,7 +142,7 @@ def init_tickers(list_name=None):
                 providers[provider] = []
             tic = providers[provider]
             data = json.load(file)
-            print(data)
+            logger.debug(data)
             for item in data:
                 fullname = os.path.join(f'{TICKER_PATH}', f'{item}.csv')
                 with open(fullname, 'w') as file:
@@ -157,7 +157,7 @@ def init_tickers(list_name=None):
         with open(TICKER_LISTS_FILE,'r') as file:
             ticker_lists=json.load(file)
             for ticker_list in ticker_lists:
-                print(f"Elaboro la lista: {ticker_list['name']} {TICKERLIST_PATH}")
+                logger.debug(f"Elaboro la lista: {ticker_list['name']} {TICKERLIST_PATH}")
                 elabora_lista(f'{ticker_list["name"]}.json',ticker_list["provider"])        
     else:
         metadata = srv.find_list_by_name(list_name)
@@ -171,12 +171,12 @@ def init_tickers(list_name=None):
 def symbols():
     stock_data = PyTickerSymbols()
     indices = stock_data.get_all_indices()
-    print(f'{indices}')
+    logger.debug(f'{indices}')
     for idx in indices:
         yahoo_symbols_eur = []
         stocks = stock_data.get_stocks_by_index(idx)  # Assumendo che tu sia interessato all'indice DAX
         for item in stocks:
-            print(item)
+            logger.debug(item)
             for symbol in item['symbols']:
                 if symbol['currency'] == 'EUR':
                     yahoo_symbols_eur.append(symbol['yahoo'])
