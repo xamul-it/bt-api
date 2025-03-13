@@ -8,6 +8,7 @@ from app.tickers import tk_bp
 from app.benchmark import bm_bp
 from app.strategy import st_bp
 from app.scheduler import sc_bp
+from app.fileserver import fs_bp
 from app.live import al_bp
 import sys
 
@@ -62,6 +63,8 @@ if False and not app.logger.handlers:
     # Aggiungi il gestore al logger dell'app Flask
     app.logger.addHandler(handler)
 
+#Gestione dei fileserver
+app.register_blueprint(fs_bp, url_prefix=f'/fs')
 
 #Gestione dei benchmark
 app.register_blueprint(bm_bp, url_prefix=f'{url_prefix}/bm')
