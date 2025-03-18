@@ -46,8 +46,14 @@ IMMEDIATE="_immediate"
 #scheduler.add_job(tk_srv.init_tickers(), 'interval', hours=24, start_date=datetime.now() + timedelta(seconds=10), 
 #                  id='Tickers list')
 
-scheduler.add_job(tk_srv.init_tickers, CronTrigger(hour='20', minute=0), id='TickersList', replace_existing=True, 
-                  max_instances=1)
+#scheduler.add_job(tk_srv.init_tickers, CronTrigger(hour='20', minute=0), id='TickersList', replace_existing=True, 
+#                  max_instances=1)
+scheduler.add_job(tk_srv.init_tickers, CronTrigger(hour='20', minute=0), id='Aggiorna ALLMIB', replace_existing=True, 
+                  max_instances=1, kwargs={"list_name":"allmib"})
+scheduler.add_job(tk_srv.init_tickers, CronTrigger(hour='20', minute=0), id='Aggiorna NASDAQ 100', replace_existing=True, 
+                  max_instances=1,  kwargs={"list_name":"NASDAQ 100"})
+scheduler.add_job(tk_srv.init_tickers, CronTrigger(hour='20', minute=0), id='Aggiorna NASDAQ 30', replace_existing=True, 
+                  max_instances=1,  kwargs={"list_name":"NASDAQ 30"})
 #scheduler.add_job(tk_srv.read_ticker_csv_files, 'interval', hours=24, start_date=datetime.now() + timedelta(seconds=10), id='Tickers list')
 
 def load_jobs(data=None):

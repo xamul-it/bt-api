@@ -19,10 +19,17 @@ import logging
 
 
 data_list = []
-blacklist = []
+
 
 emitter = EventEmitter()
 logger = logging.getLogger(__name__)
+
+try:
+    with open(TICKER_FILE, 'r') as f:
+        data_list = json.load(f)
+except:
+    logger.error("Impossibile inizializzare la lista dei ticker disponibili")
+
 
 def get_ticker_lists(force='False'):
     '''
@@ -152,6 +159,8 @@ def fetch_alpaca_data(ticker_file):
                 logger.debug(f"Nessun dato ricevuto per il ticker {ticker}")
     else:
         logger.debug("Nessun dato restituito da Alpaca")
+    emitter.emit(emitter.EV_TICKER_FETCHED,ticker_file)
+
 
 def find_list_by_name(name):
     '''
@@ -181,13 +190,17 @@ def fetch_yahoo_data(ticker_file=TICKER_FILE):
         urllib3.disable_warnings()
         requests.packages.urllib3.disable_warnings() 
         with lock:
-            stocks =  yf.download(ticker, progress=False, actions=True, period="max", interval="1d", session=session)
+            stocks =  yf.download(ticker, progress=False, actions=True, period="max", interval="1d", session=session, auto_adjust=False)
             logger.warning(f'{ticker_file}: {yf.warnings}')
         unique_tickers = stocks.columns.get_level_values('Ticker').unique()
         # Cicla su ciascun ticker e salva i relativi dati in un file CSV
         for ticker in unique_tickers:
             # Filtra il DataFrame per conservare solo le colonne relative a quel ticker
             data_for_ticker = stocks.xs(ticker, level='Ticker', axis=1)
+            print(data_for_ticker.tail())
+            # Correzione degli errori di virgola
+            #data_for_ticker = correct_anomalies(data_for_ticker)
+
             data_for_ticker = data_for_ticker.dropna()
             # Costruisci il nome del file usando il ticker
             filename = os.path.join(f'{TICKER_PATH}', f'{ticker}.csv')
@@ -200,12 +213,56 @@ def fetch_yahoo_data(ticker_file=TICKER_FILE):
     emitter.emit(emitter.EV_TICKER_FETCHED,ticker_file)
 
 
-def read_ticker_csv_files(ticker_file=None):
-    '''
-    Aggiorna la lista dei ticker e la blacklist
+def correct_anomalies(data, threshold=10):
+    """
+    Corregge i valori anomali causati da errori di virgola mancante.
+    threshold: soglia per rilevare anomalie (es. 10 = 1000% di variazione)
+    """
+    data = data.copy()
+    cols = ['High', 'Low', 'Open', 'Close']
+    
+    # Calcola la media mobile e il close precedente come riferimento
+    data['Prev_Close'] = data['Close'].shift(1)
+    data['Rolling_Ref'] = data['Close'].rolling(window=5, min_periods=1).mean()
+    
+    for i in range(1, len(data)):
+        for col in cols:
+            current_val = data.at[data.index[i], col]
+            prev_close = data.at[data.index[i-1], 'Prev_Close']
+            rolling_ref = data.at[data.index[i], 'Rolling_Ref']
+            
+            # Calcola il riferimento come max tra close precedente e media mobile
+            ref = max(prev_close, rolling_ref)
+            
+            if ref > 0 and current_val > 0:
+                ratio = current_val / ref
+                
 
+                # Se il rapporto supera la soglia, cerca il fattore di correzione
+                if ratio >= threshold:
+                    factor = 1
+                    while (current_val / (10 ** factor)) / ref < threshold:
+                        factor += 1
+                    
+                    factor = 10 ** factor
+                    corrected_val = current_val / factor
+                    
+                    # Applica la correzione a tutte le colonne
+                    for c in cols:
+                        data.at[data.index[i], c] = data.at[data.index[i], c] / factor
+                    data.at[data.index[i], 'Volume'] = data.at[data.index[i], 'Volume'] * factor
+                    
+                    print(f"Corretto: {data.index[i]} | {col} originale: {current_val} => corretto: {corrected_val} (fattore: {factor})")
+
+    # Rimuove le colonne temporanee
+    data.drop(['Prev_Close', 'Rolling_Ref'], axis=1, inplace=True)
+    return data
+
+def update_ticker_list_from_csv(ticker_file=None):
     '''
-    logger.debug(f"read_ticker_csv_files {ticker_file}")
+    Aggiorna la lsita dei symboli con le informazioni dello stato di download
+    '''
+    logger.debug(f"update_ticker_list_from_csv {ticker_file}")
     if ticker_file is None:
         csv_files = [f for f in os.listdir(TICKER_PATH) if f.endswith('.csv')]
     elif ticker_file == "bl.json":
@@ -221,8 +278,7 @@ def read_ticker_csv_files(ticker_file=None):
                 logger.error("JSON file format is incorrect: expected a list of strings")
                 return []
 
-    #va rivista questa parte perché carico frammetni di lista
-    data_list = []       
+    data_list = []
 
     for filename in csv_files:
         filepath = os.path.join(TICKER_PATH, filename)
@@ -234,46 +290,49 @@ def read_ticker_csv_files(ticker_file=None):
             # Leggi il file CSV
             df = pd.read_csv(filepath)
 
+            stats = os.stat(filepath)
+            file_info['updated'] = datetime.fromtimestamp(stats.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+            file_info['log'] = ""
+
             # Assicurati che il file non sia vuoto e che contenga la colonna 'Date'
-            if not df.empty and 'Date' in df.columns:
-                stats = os.stat(filepath)
-                # Crea un dizionario con le informazioni richieste
-                file_info['first'] = df['Date'].iloc[0] # Prima data
-                file_info['last'] = df['Date'].iloc[-1]   # Ultima data
-                file_info['status'] = "ok"
-                file_info['updated'] = datetime.fromtimestamp(stats.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-                file_info['log'] = ""
+            if not df.empty:
+                if 'Date' in df.columns:
+                    # Crea un dizionario con le informazioni richieste
+                    file_info['first'] = df['Date'].iloc[0] # Prima data
+                    file_info['last'] = df['Date'].iloc[-1]   # Ultima data
+                    file_info['status'] = "ok"
+                elif 'timestamp' in df.columns:
+                    stats = os.stat(filepath)
+                    # Crea un dizionario con le informazioni richieste
+                    file_info['first'] = df['timestamp'].iloc[0] # Prima data
+                    file_info['last'] = df['timestamp'].iloc[-1]   # Ultima data
+                    file_info['status'] = "ok"
+                else:
+                    msg = f"Nel file {filename} manca la colonna 'Date' o 'timestamp'."
+                    file_info['status'] = "ko"
+                    file_info['log'] = msg
+                    logger.debug(msg)
             else:
-                msg = f"Il file {filename} è vuoto o manca la colonna 'Date'."
+                msg = f"Il file {filename} è vuoto."
                 file_info['status'] = "ko"
                 file_info['log'] = msg
                 logger.debug(msg)
-                if filename not in blacklist:
-                    srv.blacklist.append(filename)
         except Exception as e:
             msg = f"Errore durante la lettura del file {filename}: {e}"
             file_info['status'] = "ko"
             file_info['log'] = msg
             logger.debug(msg)
-            if filename not in blacklist:
-                srv.blacklist.append(filename)
 
         data_list.append(file_info)
-        if (file_info["filename"]) in blacklist:
-            del blacklist[file_info["filename"]]
 
     #Metto insieme le liste globali da quelle locali
-    #prima data_list
+    #creo un dizionario dall'array data_list
     if not hasattr(srv, 'data_dict'):
         srv.data_dict = {item['filename']: item for item in srv.data_list}
 
     # Scorri ogni elemento in data_list e aggiorna/aggiungi nel dizionario
     for file_info in data_list:
         srv.data_dict[file_info['filename']] = file_info
-
-    for filename in blacklist:
-        if filename in srv.data_dict:
-            del srv.data_dict[filename]
 
     # Sincronizzare il dizionario con la lista
     srv.data_list = list(srv.data_dict.values())
@@ -288,7 +347,7 @@ def read_ticker_csv_files(ticker_file=None):
 
 #read_ticker_csv_files()
 
-emitter.on(emitter.EV_TICKER_FETCHED,read_ticker_csv_files)
+emitter.on(emitter.EV_TICKER_FETCHED,update_ticker_list_from_csv)
 #TODO Sistemare perché deve aggiornare le lsite alpaca o yahoo
 #emitter.on(emitter.EV_TICKER_CHANGED,fetch_ticker_data)
 emitter.on(emitter.EV_TICKERLIST_CHANGE,get_ticker_lists)

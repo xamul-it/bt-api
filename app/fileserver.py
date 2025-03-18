@@ -26,6 +26,14 @@ def serve_backup(filename):
     print(f'Request {filename}')
     return serve_file(BACKUP_DIRECTORY, filename)
 
+@fs_bp.route('/out/<path:filename>')
+def serve_out(filename):
+    """
+    Serve file dalla cartella ./out/.
+    """
+    print(f'Request {filename}')
+    return serve_file("./out",filename)
+
 def serve_file(directory, filename):
     """
     Funzione di utilità per servire file in modo sicuro.

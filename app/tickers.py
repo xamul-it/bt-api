@@ -40,7 +40,7 @@ def list():
 
     '''
     if len(srv.data_list) == 0:
-        srv.read_ticker_csv_files()
+        srv.update_ticker_list_from_csv()
     return jsonify(srv.data_list)
 
 
