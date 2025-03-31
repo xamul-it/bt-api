@@ -199,7 +199,8 @@ def delete_job(job_id):
     if job:
         scheduler.remove_job(job_id)
         file_path = os.path.join(SCHEDULE_PATH, f"{job_id}.json")
-        os.remove(file_path)
+        if os.path.exists(file_path):
+            os.remove(file_path)
         return jsonify({'message': f'Job {job_id} paused successfully'})
     return jsonify({'message': 'Job not found'}), 404
 

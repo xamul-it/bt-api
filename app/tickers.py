@@ -125,7 +125,7 @@ def update_tickers(list_name):
 
 @tk_bp.route('/init', defaults={'list_name': None})
 @tk_bp.route('/init/<list_name>')
-def init_tickers(list_name=None):
+def init_tickers(list_name=None,format=jsonify):
     '''
     Scarica i ticker dal provider.
     Se non viene passato il nome della lista aggiorna l'intero elenco dei tcker
@@ -162,8 +162,8 @@ def init_tickers(list_name=None):
     else:
         metadata = srv.find_list_by_name(list_name)
         elabora_lista(f"{list_name}.json",metadata["provider"])
-
-    return jsonify({"ok": f"TODO Restrituire l'ID ","data":providers}), 200
+    if format=="jsonify":
+        return jsonify({"ok": f"TODO Restrituire l'ID ","data":providers}), 200
 
 
 

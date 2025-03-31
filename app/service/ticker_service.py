@@ -70,16 +70,16 @@ def update_ticker_lists():
                 num_items = 0  # Se il file non è un JSON valido o non è un array
             stats = os.stat(file_path)
             old_list = [lista for lista  in old if lista['name'] == filename[:-5]]
-            old_list = None if len(old_list) == 0 else old_list[0]
+            old_list = {} if len(old_list) == 0 else old_list[0]
             provider = old_list["provider"] if "provider" in old_list else "yahoo"
             tickers.append({
                     'name': filename[:-5],
-                    'created': datetime.fromtimestamp(stats.st_ctime).strftime('%Y-%m-%d %H:%M:%S') if old_list is None else old_list["created"],
+                    'created': datetime.fromtimestamp(stats.st_ctime).strftime('%Y-%m-%d %H:%M:%S') if 'created' not in old_list else old_list["created"],
                     'updated': datetime.fromtimestamp(stats.st_mtime).strftime('%Y-%m-%d %H:%M:%S'),
                     'num': num_items,
                     'valid': valid,
-                    'avatar': '' if old_list is None else old_list["avatar"] ,
-                    'des': filename if old_list is None else old_list["des"] ,
+                    'avatar': '' if 'avatar' not in old_list else old_list["avatar"] ,
+                    'des': filename if 'des' not in old_list else old_list["des"] ,
                     'provider': provider ,
                 })
     # Scrive i dati nel file index.json
@@ -197,7 +197,6 @@ def fetch_yahoo_data(ticker_file=TICKER_FILE):
         for ticker in unique_tickers:
             # Filtra il DataFrame per conservare solo le colonne relative a quel ticker
             data_for_ticker = stocks.xs(ticker, level='Ticker', axis=1)
-            print(data_for_ticker.tail())
             # Correzione degli errori di virgola
             #data_for_ticker = correct_anomalies(data_for_ticker)
 
