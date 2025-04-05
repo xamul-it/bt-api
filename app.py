@@ -91,4 +91,4 @@ def home():
 
 
 if __name__ == '__main__':
-    app.run(port=5001, debug=True, use_reloader=True)
+    app.run(port=os.environ['SERVER_PORT'], debug=True, use_reloader=True)

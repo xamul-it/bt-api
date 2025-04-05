@@ -103,9 +103,9 @@ def fetch_ticker_data_background(ticker_file=TICKER_FILE, provider='yahoo'):
 
 def fetch_alpaca_data(ticker_file):
     logger.debug(f"avvio caricamento {ticker_file}")
-    # Inserisci qui le tue credenziali Alpaca
-    API_KEY = 'PK1IIXGVGZSTZVYZ713C'
-    SECRET_KEY = '6EOmUlS8pSaJk7ZNhZVf5eodjFWeMlw0TWJUdhY9'
+    # Credenziali Alpaca
+    API_KEY = os.environ['ALPACA_API_KEY']
+    SECRET_KEY = os.environ['ALPACA_SECRET_KEY']
 
     # Inizializza il client per i dati storici
     client = StockHistoricalDataClient(API_KEY, SECRET_KEY)

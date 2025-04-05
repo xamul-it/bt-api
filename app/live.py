@@ -13,15 +13,15 @@ from flask import Blueprint, jsonify, request
 from .manager.cerebro_manager import CerebroManager
 from .manager.cerebro_manager import CerebroInstance
 import logging
-
+import os
 import requests
 
 
 al_bp = Blueprint('live', __name__)
 logger = logging.getLogger(__name__)
 
-API_KEY = 'PK1IIXGVGZSTZVYZ713C'
-API_SECRET = '6EOmUlS8pSaJk7ZNhZVf5eodjFWeMlw0TWJUdhY9'
+API_KEY = os.environ['ALPACA_API_KEY']
+SECRET_KEY = os.environ['ALPACA_SECRET_KEY']
 BASE_URL = 'https://paper-api.alpaca.markets'
 
 

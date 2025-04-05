@@ -17,7 +17,7 @@ from strategies import multiTickerStrategy as mts
 from strategies import weekly
 import strategies
 from itertools import islice
-
+import os
 
 logger = logging.getLogger(__name__)
 # Configurazione di base del logging
@@ -25,8 +25,8 @@ logging.basicConfig(level=logging.DEBUG)
 
 symbol = al_data.AlpacaLiveData(
                 symbol='AZN',
-                api_key='PK1IIXGVGZSTZVYZ713C',
-                secret_key='6EOmUlS8pSaJk7ZNhZVf5eodjFWeMlw0TWJUdhY9',
+                api_key=os.environ['ALPACA_API_KEY'],
+                secret_key=os.environ['ALPACA_SECRET_KEY'],
                 timeframe=bt.TimeFrame.Minutes,
                 compression=1
             )
@@ -40,8 +40,8 @@ class CerebroInstance:
     cerebro: bt.cerebro = Cerebro()  # Istanza di Backtrader Cerebro
     status: str = "Stopped"  # Stati: Stopped, Running, Error
 
-    API_KEY = 'PK1IIXGVGZSTZVYZ713C'
-    API_SECRET = '6EOmUlS8pSaJk7ZNhZVf5eodjFWeMlw0TWJUdhY9'
+    API_KEY = os.environ['ALPACA_API_KEY']
+    SECRET_KEY = os.environ['ALPACA_SECRET_KEY']
 
     def __post_init__(self):
         logger.info(f"Inizializzazione dell'istanza {self.name}...")
