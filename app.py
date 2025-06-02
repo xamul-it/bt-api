@@ -12,6 +12,12 @@ from app.fileserver import fs_bp
 from app.live import al_bp
 import sys
 
+import subprocess
+import hmac
+import hashlib
+from flask import request
+
+
 from app.main import mn
 import logging
 import warnings
@@ -52,6 +58,7 @@ logging.getLogger('matplotlib').setLevel(logging.WARNING)
 logging.getLogger('yfinance').setLevel(logging.WARNING)
 logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
 logging.getLogger('peewee').setLevel(logging.INFO)
+
 if False and not app.logger.handlers:
     # Crea un gestore che invia i log a stdout
     handler = logging.StreamHandler(sys.stdout)
@@ -92,3 +99,33 @@ def home():
 
 if __name__ == '__main__':
     app.run(port=os.environ['SERVER_PORT'], debug=True, use_reloader=True)
+
+
+GITHUB_SECRET = b'ssQroXoUKHRspjsONB9bQiyHmjK6nrh1'  # Sostituisci con il secret configurato nel webhook GitHub
+REPO_PATH = "/home/htpc/backtrader"
+SERVICE_NAME = "zmq"  # es. "myapp.service"
+
+def verify_signature(payload, signature):
+    if signature is None:
+        return False
+    mac = hmac.new(GITHUB_SECRET, msg=payload, digestmod=hashlib.sha256)
+    return hmac.compare_digest('sha256=' + mac.hexdigest(), signature)
+
+@app.route('/github-webhook', methods=['POST'])
+def github_webhook():
+    payload = request.data
+    signature = request.headers.get("X-Hub-Signature-256")
+
+    if not verify_signature(payload, signature):
+        return "Invalid signature", 403
+
+    try:
+        # Stop servizio
+        subprocess.run(["systemctl", "stop", SERVICE_NAME], check=True)
+        # Pull repository
+        subprocess.run(["git", "-C", REPO_PATH, "pull"], check=True)
+        # Start servizio
+        subprocess.run(["systemctl", "start", SERVICE_NAME], check=True)
+        return "Deployment eseguito", 200
+    except subprocess.CalledProcessError as e:
+        return f"Errore durante il deployment: {e}", 500
