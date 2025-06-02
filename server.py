@@ -102,6 +102,7 @@ GITHUB_SECRET = b'ssQroXoUKHRspjsONB9bQiyHmjK6nrh1'  # Sostituisci con il secret
 REPO_PATH = "/home/htpc/backtrader"
 SERVICE_NAME = "zmq-service"  # es. "myapp.service"
 
+
 def verify_signature(payload, signature):
     if signature is None:
         return False
