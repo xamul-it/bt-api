@@ -25,10 +25,10 @@ SECRET_KEY = os.environ.get('ALPACA_SECRET_KEY','')
 BASE_URL = 'https://paper-api.alpaca.markets'
 
 
-trading_client = TradingClient(API_KEY, API_SECRET, paper=True)
+trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)
 trading_client._session.verify = False
 
-historical_client = StockHistoricalDataClient(API_KEY, API_SECRET)
+historical_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
 historical_client._session.verify = False
 
 
