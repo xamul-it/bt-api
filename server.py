@@ -115,7 +115,7 @@ def github_webhook():
     signature = request.headers.get("X-Hub-Signature-256")
 
     if not verify_signature(payload, signature):
-        return "Invalid signature", 403
+        return f"Invalid signature {payload}:{signature}", 403
 
     try:
         # Stop servizio
