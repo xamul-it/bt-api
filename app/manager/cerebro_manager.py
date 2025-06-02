@@ -25,8 +25,8 @@ logging.basicConfig(level=logging.DEBUG)
 
 symbol = al_data.AlpacaLiveData(
                 symbol='AZN',
-                api_key=os.environ['ALPACA_API_KEY'],
-                secret_key=os.environ['ALPACA_SECRET_KEY'],
+                api_key=os.environ.get('ALPACA_API_KEY',''),
+                secret_key=os.environ.get('ALPACA_SECRET_KEY',''),
                 timeframe=bt.TimeFrame.Minutes,
                 compression=1
             )
