@@ -20,8 +20,8 @@ import requests
 al_bp = Blueprint('live', __name__)
 logger = logging.getLogger(__name__)
 
-API_KEY = os.environ['ALPACA_API_KEY']
-SECRET_KEY = os.environ['ALPACA_SECRET_KEY']
+API_KEY = os.environ.get('ALPACA_API_KEY','')
+SECRET_KEY = os.environ.get('ALPACA_SECRET_KEY','')
 BASE_URL = 'https://paper-api.alpaca.markets'
 
 
