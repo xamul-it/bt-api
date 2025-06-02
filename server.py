@@ -1,7 +1,6 @@
 #!/usr/bin/python
-import os
-import json
-from flask import Flask
+
+from flask import Flask, request
 from flask_cors import CORS
 from datetime import datetime
 from app.tickers import tk_bp
@@ -10,15 +9,13 @@ from app.strategy import st_bp
 from app.scheduler import sc_bp
 from app.fileserver import fs_bp
 from app.live import al_bp
-import sys
+from app.main import mn
 
+import os
+import sys
 import subprocess
 import hmac
 import hashlib
-from flask import request
-
-
-from app.main import mn
 import logging
 import warnings
 from urllib3.exceptions import InsecureRequestWarning
@@ -103,7 +100,7 @@ if __name__ == '__main__':
 
 GITHUB_SECRET = b'ssQroXoUKHRspjsONB9bQiyHmjK6nrh1'  # Sostituisci con il secret configurato nel webhook GitHub
 REPO_PATH = "/home/htpc/backtrader"
-SERVICE_NAME = "zmq"  # es. "myapp.service"
+SERVICE_NAME = "zmq-service"  # es. "myapp.service"
 
 def verify_signature(payload, signature):
     if signature is None:
