@@ -110,7 +110,7 @@ def verify_signature(payload, signature):
 
 @app.route('/github-webhook', methods=['POST'])
 def github_webhook():
-    payload = request.data
+    payload = request.get_data()
     signature = request.headers.get("X-Hub-Signature-256")
 
     if not verify_signature(payload, signature):
