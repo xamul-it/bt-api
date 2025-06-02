@@ -119,9 +119,9 @@ def github_webhook():
         # Stop servizio
         #subprocess.run(["systemctl", "stop", SERVICE_NAME], check=True)
         # Pull repository
-        subprocess.run(["git", "-C", REPO_PATH, "pull", "--no-edit"], check=True)
+        pull_result = subprocess.run(["git", "-C", REPO_PATH, "pull", "--no-edit"], check=True, capture_output=True, text=True)
         # Start servizio
-        subprocess.run(["systemctl", "restart", SERVICE_NAME], check=True)
-        return "Deployment eseguito", 200
+        restart_result = subprocess.run(["systemctl", "--user", "restart", SERVICE_NAME], check=True, capture_output=True, text=True)
+        return f"Deployment eseguito:\n{pull_result.stdout}\n{restart_result.stdout}", 200
     except subprocess.CalledProcessError as e:
         return f"Errore durante il deployment: {e}", 500
