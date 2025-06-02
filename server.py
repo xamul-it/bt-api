@@ -93,7 +93,6 @@ app.register_blueprint(sc_bp, url_prefix=f'{url_prefix}/sc')
 def home():
     return "Ciao, mondo!"
 
-
 if __name__ == '__main__':
     app.run(port=os.environ['SERVER_PORT'], debug=True, use_reloader=True)
 
