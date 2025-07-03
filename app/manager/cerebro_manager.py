@@ -40,8 +40,8 @@ class CerebroInstance:
     cerebro: bt.cerebro = Cerebro()  # Istanza di Backtrader Cerebro
     status: str = "Stopped"  # Stati: Stopped, Running, Error
 
-    API_KEY = os.environ['ALPACA_API_KEY']
-    SECRET_KEY = os.environ['ALPACA_SECRET_KEY']
+    API_KEY = os.environ.get('ALPACA_API_KEY','')
+    SECRET_KEY = os.environ.get('ALPACA_SECRET_KEY','')
 
     def __post_init__(self):
         logger.info(f"Inizializzazione dell'istanza {self.name}...")
