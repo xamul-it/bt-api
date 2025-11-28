@@ -54,7 +54,6 @@ logger = logging.getLogger(__name__)
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
 logging.getLogger('yfinance').setLevel(logging.WARNING)
 logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
-logging.getLogger('peewee').setLevel(logging.INFO)
 
 if False and not app.logger.handlers:
     # Crea un gestore che invia i log a stdout
