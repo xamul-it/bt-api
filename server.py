@@ -95,32 +95,81 @@ def home():
 if __name__ == '__main__':
     app.run(port=os.environ['SERVER_PORT'], debug=True, use_reloader=True)
 
-GITHUB_SECRET = b'ssQroXoUKHRspjsONB9bQiyHmjK6nrh1'  # Sostituisci con il secret configurato nel webhook GitHub
-REPO_PATH = "/home/htpc/backtrader"
-SERVICE_NAME = "zmq-proxy"  # es. "myapp.service"
+# GitHub webhook configuration - load from environment
+GITHUB_SECRET = os.environ.get('GITHUB_WEBHOOK_SECRET')
+if GITHUB_SECRET:
+    GITHUB_SECRET = GITHUB_SECRET.encode('utf-8') if isinstance(GITHUB_SECRET, str) else GITHUB_SECRET
+REPO_PATH = os.environ.get('GITHUB_REPO_PATH', "/home/htpc/backtrader")
+SERVICE_NAME = os.environ.get('GITHUB_RESTART_SERVICE', "zmq-proxy")
 
 
 def verify_signature(payload, signature):
-    if signature is None:
+    """
+    Verify GitHub webhook signature using HMAC SHA256.
+    Returns False if signature is invalid or GITHUB_SECRET is not configured.
+    """
+    if signature is None or GITHUB_SECRET is None:
+        logger.warning("GitHub webhook signature validation failed: missing signature or secret")
         return False
-    mac = hmac.new(GITHUB_SECRET, msg=payload, digestmod=hashlib.sha256)
-    return hmac.compare_digest('sha256=' + mac.hexdigest(), signature)
+
+    try:
+        mac = hmac.new(GITHUB_SECRET, msg=payload, digestmod=hashlib.sha256)
+        expected_signature = 'sha256=' + mac.hexdigest()
+        return hmac.compare_digest(expected_signature, signature)
+    except Exception as e:
+        logger.error(f"Error verifying webhook signature: {e}")
+        return False
 
 @app.route('/github-webhook', methods=['POST'])
 def github_webhook():
+    """
+    GitHub webhook endpoint for automatic deployment.
+    Requires GITHUB_WEBHOOK_SECRET environment variable to be set.
+    """
+    # Check if webhook is configured
+    if GITHUB_SECRET is None:
+        logger.error("GitHub webhook called but GITHUB_WEBHOOK_SECRET not configured")
+        return "Webhook not configured", 503
+
     payload = request.get_data()
     signature = request.headers.get("X-Hub-Signature-256")
 
+    # Verify signature
     if not verify_signature(payload, signature):
-        return f"Invalid signature {payload}:{signature}", 403
+        logger.warning(f"Invalid webhook signature from {request.remote_addr}")
+        return "Invalid signature", 403
 
     try:
-        # Stop servizio
-        #subprocess.run(["systemctl", "stop", SERVICE_NAME], check=True)
+        logger.info(f"Valid webhook received from {request.remote_addr}, starting deployment")
+
         # Pull repository
-        pull_result = subprocess.run(["git", "-C", REPO_PATH, "pull", "--no-edit"], check=True, capture_output=True, text=True)
-        # Start servizio
-        restart_result = subprocess.run(["systemctl", "--user", "restart", SERVICE_NAME], check=True, capture_output=True, text=True)
-        return f"Deployment eseguito:\n{pull_result.stdout}\n{restart_result.stdout}", 200
+        pull_result = subprocess.run(
+            ["git", "-C", REPO_PATH, "pull", "--no-edit"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        logger.info(f"Git pull completed: {pull_result.stdout}")
+
+        # Restart service
+        restart_result = subprocess.run(
+            ["systemctl", "--user", "restart", SERVICE_NAME],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        logger.info(f"Service restart completed: {restart_result.stdout}")
+
+        return f"Deployment successful:\n{pull_result.stdout}\n{restart_result.stdout}", 200
+
+    except subprocess.TimeoutExpired as e:
+        logger.error(f"Deployment timeout: {e}")
+        return f"Deployment timeout: {e.cmd}", 500
     except subprocess.CalledProcessError as e:
-        return f"Errore durante il deployment: {e}", 500
+        logger.error(f"Deployment failed: {e.stderr}")
+        return f"Deployment failed: {e.stderr}", 500
+    except Exception as e:
+        logger.error(f"Unexpected error during deployment: {e}", exc_info=True)
+        return "Internal server error", 500
