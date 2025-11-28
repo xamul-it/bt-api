@@ -18,6 +18,8 @@ from strategies import weekly
 import strategies
 from itertools import islice
 import os
+import importlib
+import re
 
 logger = logging.getLogger(__name__)
 # Configurazione di base del logging
@@ -53,9 +55,38 @@ class CerebroInstance:
 
 
     def load_strategy(self):
-        #Per testing
-        #self.cerebro.addstrategy(DummyStrategy)
-        self.cerebro.addstrategy(eval(f'strategies.{self.strategy_name}'))
+        """
+        Load and add strategy to cerebro.
+        Security: Uses safe importlib instead of eval().
+        """
+        # For testing
+        # self.cerebro.addstrategy(DummyStrategy)
+
+        try:
+            # Validate strategy name format
+            if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*$', self.strategy_name):
+                raise ValueError(f'Invalid strategy name format: {self.strategy_name}')
+
+            # Split into module and class name
+            module_name, class_name = self.strategy_name.rsplit('.', 1)
+
+            # Safely import the strategy module
+            strategy_module = importlib.import_module(f'strategies.{module_name}')
+
+            # Get the strategy class
+            strategy_class = getattr(strategy_module, class_name)
+
+            # Add strategy to cerebro
+            self.cerebro.addstrategy(strategy_class)
+
+            logger.info(f"Strategy loaded successfully: {self.strategy_name}")
+
+        except (ValueError, ModuleNotFoundError, AttributeError) as e:
+            logger.error(f'Cannot load strategy {self.strategy_name}: {e}')
+            raise
+        except Exception as e:
+            logger.error(f'Unexpected error loading strategy {self.strategy_name}: {e}')
+            raise
 
 
     def load_data(self):

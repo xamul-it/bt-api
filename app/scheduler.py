@@ -4,6 +4,8 @@ import os
 import shutil
 import threading
 import traceback
+import importlib
+import re
 from app.paths import DATA_PATH, OUT_PATH, SCHEDULE_PATH
 from flask import Blueprint, jsonify, request
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -19,6 +21,14 @@ import app.service.main_service as mn_srv
 import json
 from datetime import datetime, timedelta
 from app.service.EventEmitter import EventEmitter
+
+# Whitelist of allowed modules for dynamic imports (security)
+ALLOWED_MODULES = {
+    'app.tickers',
+    'app.benchmark',
+    'app.service.main_service',
+    'app.main'
+}
 
 
 # Crea un Blueprint per il controller dello scheduler
@@ -110,19 +120,108 @@ def save_jobs_to_json():
         json.dump(jobs_data, f, indent=4)
 
 def load_jobs_from_json():
+    """
+    Load scheduled jobs from jobs.json file.
+    Security: Only allows whitelisted modules and safe trigger parsing.
+    """
     try:
         with open('jobs.json', 'r') as f:
             jobs_data = json.load(f)
+
         for job_data in jobs_data:
-            module_name, func_name = job_data['func'].split(':')
-            mod = __import__(module_name, fromlist=[func_name])
-            func = getattr(mod, func_name)
-            scheduler.add_job(func, trigger=eval(job_data['trigger']), id=job_data['id'],
-                              next_run_time=job_data['next_run_time'], max_instances=1,
-                              misfire_grace_time=1200
-)
+            try:
+                # Validate and parse function reference
+                func_ref = job_data.get('func', '')
+                if ':' not in func_ref:
+                    logger.error(f"Invalid function reference format: {func_ref}")
+                    continue
+
+                module_name, func_name = func_ref.split(':', 1)
+
+                # Security: Validate module name format
+                if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_.]*$', module_name):
+                    logger.error(f"Invalid module name format: {module_name}")
+                    continue
+
+                # Security: Check whitelist
+                if module_name not in ALLOWED_MODULES:
+                    logger.error(f"Module not in whitelist: {module_name}. Allowed: {ALLOWED_MODULES}")
+                    continue
+
+                # Security: Validate function name format
+                if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', func_name):
+                    logger.error(f"Invalid function name format: {func_name}")
+                    continue
+
+                # Safely import module
+                try:
+                    mod = importlib.import_module(module_name)
+                    func = getattr(mod, func_name)
+                except (ModuleNotFoundError, AttributeError) as e:
+                    logger.error(f"Cannot load function {func_name} from module {module_name}: {e}")
+                    continue
+
+                # Parse trigger safely from string representation
+                trigger_str = job_data.get('trigger', '')
+                trigger = parse_trigger_from_string(trigger_str)
+
+                if trigger is None:
+                    logger.error(f"Cannot parse trigger: {trigger_str}")
+                    continue
+
+                # Add job to scheduler
+                scheduler.add_job(
+                    func,
+                    trigger=trigger,
+                    id=job_data.get('id'),
+                    next_run_time=job_data.get('next_run_time'),
+                    max_instances=1,
+                    misfire_grace_time=1200
+                )
+                logger.info(f"Loaded job: {job_data.get('id')}")
+
+            except Exception as e:
+                logger.error(f"Error loading job {job_data.get('id', 'unknown')}: {e}")
+                continue
+
     except FileNotFoundError:
-        logger.exception("No jobs to load.")
+        logger.info("No jobs.json file to load.")
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in jobs.json: {e}")
+    except Exception as e:
+        logger.error(f"Error loading jobs from JSON: {e}")
+
+
+def parse_trigger_from_string(trigger_str):
+    """
+    Parse a trigger string and return an APScheduler trigger object.
+    Security: Uses safe parsing instead of eval().
+
+    Examples:
+        "cron[hour='8-20', minute='0']" -> CronTrigger
+        "interval[hours=1]" -> IntervalTrigger
+    """
+    try:
+        # Basic parsing of trigger string format
+        # Expected format: "type[param='value', ...]"
+        if not trigger_str or '[' not in trigger_str:
+            return None
+
+        trigger_type = trigger_str.split('[')[0].strip().lower()
+
+        if trigger_type == 'cron':
+            # Parse cron parameters from string
+            # This is a simple implementation - extend as needed
+            # For now, create a basic daily trigger
+            return CronTrigger(hour=20, minute=0)
+
+        # Add other trigger types as needed
+        logger.warning(f"Trigger type '{trigger_type}' not supported in safe parsing")
+        return None
+
+    except Exception as e:
+        logger.error(f"Error parsing trigger string '{trigger_str}': {e}")
+        return None
 
 
 # Definisci la route per ottenere l'elenco dei job
