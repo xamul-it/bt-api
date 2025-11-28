@@ -90,18 +90,49 @@ def btrunstrat(data, args=[]):
 runs = {}
 
 def load_data():
+    """Load configuration from JSON files in DATA_PATH"""
+    loaded_count = 0
+    failed_files = []
+
     # Iterare su tutti i file nella cartella
     for filename in os.listdir(DATA_PATH):
+        if not filename.endswith('.json'):
+            continue
+
+        file_path = os.path.join(DATA_PATH, filename)
+
         try:
-            if filename.endswith('.json'):  # Verificare che il file sia un JSON
-                file_path = os.path.join(DATA_PATH, filename)
-                
-                # Aprire il file JSON e caricarne i dati
-                with open(file_path, 'r', encoding='utf-8') as json_file:
-                    data = json.load(json_file)
-                    runs.update(data)
-        except:
-            logger.warning(f"Il file {filename} non può essere caricato e viene saltato")
+            # Aprire il file JSON e caricarne i dati
+            with open(file_path, 'r', encoding='utf-8') as json_file:
+                data = json.load(json_file)
+                runs.update(data)
+                loaded_count += 1
+                logger.debug(f"Loaded {filename}: {len(data)} entries")
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in {filename}: {e}")
+            failed_files.append(filename)
+
+        except (OSError, PermissionError) as e:
+            logger.error(f"Cannot read {filename}: {e}")
+            failed_files.append(filename)
+
+        except KeyError as e:
+            logger.error(f"Missing required key in {filename}: {e}")
+            failed_files.append(filename)
+
+        except Exception as e:
+            # Unexpected errors should NOT be silently ignored
+            logger.exception(f"Unexpected error loading {filename}: {e}")
+            raise  # Re-raise to surface bugs
+
+    logger.info(f"Loaded {loaded_count} JSON files from {DATA_PATH}")
+
+    if failed_files:
+        logger.warning(f"Failed to load {len(failed_files)} files: {', '.join(failed_files)}")
+
+    if loaded_count == 0 and len([f for f in os.listdir(DATA_PATH) if f.endswith('.json')]) > 0:
+        raise RuntimeError(f"No valid JSON files could be loaded from {DATA_PATH}")
 
 
 def save_data(data):
