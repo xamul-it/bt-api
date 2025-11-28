@@ -55,10 +55,19 @@ def is_safe_path(base_directory, requested_path):
     """
     Verifica che il percorso richiesto sia sicuro e non tenti di accedere
     a directory esterne a base_directory.
+
+    Security: Uses os.path.commonpath() to prevent path traversal attacks.
+    startswith() is vulnerable to attacks like: /config matching /config-backup
     """
     # Risolve il percorso assoluto
     requested_abs_path = os.path.abspath(os.path.join(base_directory, requested_path))
     base_abs_path = os.path.abspath(base_directory)
 
     # Verifica che il percorso richiesto sia all'interno della directory base
-    return requested_abs_path.startswith(base_abs_path)
+    # Using commonpath() instead of startswith() to prevent bypass attacks
+    try:
+        common = os.path.commonpath([requested_abs_path, base_abs_path])
+        return common == base_abs_path
+    except ValueError:
+        # commonpath() raises ValueError if paths are on different drives (Windows)
+        return False
