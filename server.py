@@ -46,7 +46,18 @@ logging.error(f"{log_level} : {os.getenv('LOG_LEVEL')}")
 #sys.path.append('../')  # Aggiusta il percorso in base alla tua struttura di cartelle
 
 app = Flask(__name__)
-CORS(app)  # Abilita CORS per tutto il tuo applicativo Flask
+
+# CORS Configuration - Environment-based for dev/prod flexibility
+# Set ALLOWED_ORIGINS env var for production, defaults to permissive for development
+allowed_origins = os.getenv('ALLOWED_ORIGINS', '*')
+if allowed_origins == '*':
+    logger.warning("CORS configured for ALL origins (*) - only use in development!")
+    CORS(app)
+else:
+    # Production: restrict to specific origins
+    origins_list = [origin.strip() for origin in allowed_origins.split(',')]
+    logger.info(f"CORS restricted to origins: {origins_list}")
+    CORS(app, origins=origins_list, supports_credentials=True)
 
 logger = logging.getLogger(__name__)
 

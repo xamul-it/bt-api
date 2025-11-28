@@ -29,6 +29,48 @@ BASE_URL = 'https://paper-api.alpaca.markets'
 # WARNING: Disabling SSL verification exposes you to MITM attacks
 DISABLE_SSL_VERIFY = os.environ.get('DISABLE_SSL_VERIFY', 'false').lower() in ('true', '1', 'yes')
 
+# Security: Origin validation for live trading endpoints
+# Set ALLOWED_ORIGINS in production, leave unset for development
+ALLOWED_ORIGINS = os.environ.get('ALLOWED_ORIGINS', None)
+ENABLE_ORIGIN_CHECK = ALLOWED_ORIGINS is not None
+
+if not ENABLE_ORIGIN_CHECK:
+    logger.warning("Origin checking DISABLED for live trading endpoints - only use in development!")
+else:
+    allowed_list = [o.strip() for o in ALLOWED_ORIGINS.split(',')]
+    logger.info(f"Origin checking ENABLED for live trading. Allowed: {allowed_list}")
+
+
+@al_bp.before_request
+def check_origin():
+    """
+    Validate request origin for live trading endpoints.
+    Only enforced when ALLOWED_ORIGINS environment variable is set.
+    """
+    if not ENABLE_ORIGIN_CHECK:
+        return  # Skip check in development
+
+    # Check Origin header (for CORS requests)
+    origin = request.headers.get('Origin')
+    referer = request.headers.get('Referer')
+
+    allowed_list = [o.strip() for o in ALLOWED_ORIGINS.split(',')]
+
+    # Validate origin or referer
+    is_valid = False
+    if origin and any(origin.startswith(allowed) for allowed in allowed_list):
+        is_valid = True
+    elif referer and any(referer.startswith(allowed) for allowed in allowed_list):
+        is_valid = True
+
+    if not is_valid:
+        logger.warning(
+            f"Blocked request to {request.path} from origin={origin}, "
+            f"referer={referer}, ip={request.remote_addr}"
+        )
+        from flask import jsonify
+        return jsonify({'error': 'Forbidden - Invalid origin'}), 403
+
 trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)
 if DISABLE_SSL_VERIFY:
     logger.warning("SSL verification DISABLED for trading_client - only use with corporate proxies!")
