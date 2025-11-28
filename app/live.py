@@ -24,12 +24,20 @@ API_KEY = os.environ.get('ALPACA_API_KEY','')
 SECRET_KEY = os.environ.get('ALPACA_SECRET_KEY','')
 BASE_URL = 'https://paper-api.alpaca.markets'
 
+# SSL verification configuration (for corporate proxies like Zscaler)
+# Set DISABLE_SSL_VERIFY=true only if you have SSL interception issues
+# WARNING: Disabling SSL verification exposes you to MITM attacks
+DISABLE_SSL_VERIFY = os.environ.get('DISABLE_SSL_VERIFY', 'false').lower() in ('true', '1', 'yes')
 
 trading_client = TradingClient(API_KEY, SECRET_KEY, paper=True)
-trading_client._session.verify = False
+if DISABLE_SSL_VERIFY:
+    logger.warning("SSL verification DISABLED for trading_client - only use with corporate proxies!")
+    trading_client._session.verify = False
 
 historical_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
-historical_client._session.verify = False
+if DISABLE_SSL_VERIFY:
+    logger.warning("SSL verification DISABLED for historical_client - only use with corporate proxies!")
+    historical_client._session.verify = False
 
 
 @al_bp.route('/portfolio', methods=['GET'])
