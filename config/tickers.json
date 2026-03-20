@@ -1,0 +1,236 @@
+[
+    {
+        "name": "AEX",
+        "created": "2024-06-01 12:49:40",
+        "updated": "2024-10-16 16:29:31",
+        "num": 70,
+        "valid": 63,
+        "avatar": "https://flagcdn.com/w320/nl.png",
+        "des": "Amterdam Exchange"
+    },
+    {
+        "name": "allmib",
+        "created": "2024-05-08 09:51:48",
+        "updated": "2024-05-08 09:51:48",
+        "num": 138,
+        "valid": 130,
+        "avatar": "https://flagcdn.com/w320/it.png",
+        "des": "allmib.json"
+    },
+    {
+        "name": "BEL 20",
+        "created": "2024-06-01 12:49:40",
+        "updated": "2024-10-16 16:29:31",
+        "num": 28,
+        "valid": 26,
+        "avatar": "https://flagcdn.com/w320/be.png",
+        "des": " Euronext Bruxelles"
+    },
+    {
+        "name": "CAC 40",
+        "created": "2024-06-01 12:49:40",
+        "updated": "2024-10-16 16:29:31",
+        "num": 75,
+        "valid": 69,
+        "avatar": "https://flagcdn.com/w320/fr.png",
+        "des": "Euronext Paris"
+    },
+    {
+        "name": "CAC Mid 60",
+        "created": "2024-06-01 12:49:41",
+        "updated": "2024-10-16 16:29:31",
+        "num": 72,
+        "valid": 62,
+        "avatar": "https://flagcdn.com/w320/fr.png",
+        "des": "Euronext Paris MID 60"
+    },
+    {
+        "name": "CDAX",
+        "created": "2024-06-01 12:49:40",
+        "updated": "2024-10-16 16:29:31",
+        "num": 1,
+        "valid": 0,
+        "avatar": "https://flagcdn.com/w320/de.png",
+        "des": "CDAX.json"
+    },
+    {
+        "name": "dax",
+        "created": "2024-05-08 09:51:48",
+        "updated": "2024-10-16 16:29:31",
+        "num": 78,
+        "valid": 76,
+        "avatar": "https://flagcdn.com/w320/de.png",
+        "des": "DAX"
+    },
+    {
+        "name": "DOW JONES",
+        "created": "2024-06-01 12:49:41",
+        "updated": "2024-10-16 16:29:31",
+        "num": 38,
+        "valid": 38,
+        "avatar": "https://flagcdn.com/w320/us.png",
+        "des": "DOW JONES"
+    },
+    {
+        "name": "etf",
+        "created": "2024-05-08 09:51:48",
+        "updated": "2024-05-08 09:51:48",
+        "num": 1,
+        "valid": 1,
+        "avatar": "",
+        "des": "etf.json"
+    },
+    {
+        "name": "EURO STOXX 50",
+        "created": "2024-06-01 12:49:41",
+        "updated": "2024-10-16 16:29:31",
+        "num": 102,
+        "valid": 96,
+        "avatar": "https://flagcdn.com/w320/eu.png",
+        "des": "EURO STOXX 50"
+    },
+    {
+        "name": "FTSE 100",
+        "created": "2024-06-01 12:49:40",
+        "updated": "2024-10-16 16:29:31",
+        "num": 183,
+        "valid": 154,
+        "avatar": "https://flagcdn.com/w320/gb.png",
+        "des": "FTSE 100"
+    },
+    {
+        "name": "ftsemib",
+        "created": "2024-05-08 09:51:48",
+        "updated": "2024-05-08 09:51:48",
+        "num": 39,
+        "valid": 37,
+        "avatar": "https://flagcdn.com/w320/it.png",
+        "des": "ftsemib.json"
+    },
+    {
+        "name": "IBEX 35",
+        "created": "2024-06-01 12:49:41",
+        "updated": "2024-10-16 16:29:31",
+        "num": 74,
+        "valid": 67,
+        "avatar": "https://flagcdn.com/w320/es.png",
+        "des": "IBEX 35.json"
+    },
+    {
+        "name": "MDAX",
+        "created": "2024-06-01 12:49:40",
+        "updated": "2024-10-16 16:29:31",
+        "num": 87,
+        "valid": 70,
+        "avatar": "https://flagcdn.com/w320/de.png",
+        "des": "MDAX.json"
+    },
+    {
+        "name": "midcap",
+        "created": "2024-05-08 09:51:48",
+        "updated": "2024-05-08 09:51:48",
+        "num": 61,
+        "valid": 57,
+        "avatar": "https://flagcdn.com/w320/it.png",
+        "des": "midcap.json"
+    },
+    {
+        "name": "MOEX",
+        "created": "2024-06-01 12:49:40",
+        "updated": "2024-10-16 16:29:31",
+        "num": 24,
+        "valid": 5,
+        "avatar": "https://flagcdn.com/w320/ru.png",
+        "des": "MOEX.json"
+    },
+    {
+        "name": "NASDAQ 100",
+        "created": "2024-06-01 12:49:41",
+        "updated": "2024-10-16 16:29:31",
+        "num": 107,
+        "valid": 102,
+        "avatar": "https://flagcdn.com/w320/us.png",
+        "des": "NASDAQ 100.json"
+    },
+    {
+        "name": "OMX Helsinki 25",
+        "created": "2024-06-01 12:49:40",
+        "updated": "2024-10-16 16:29:31",
+        "num": 36,
+        "valid": 33,
+        "avatar": "https://flagcdn.com/w320/fi.png",
+        "des": "OMX Helsinki 25.json"
+    },
+    {
+        "name": "OMX Stockholm 30",
+        "created": "2024-06-01 12:49:41",
+        "updated": "2024-10-16 16:29:31",
+        "num": 50,
+        "valid": 36,
+        "avatar": "https://flagcdn.com/w320/fi.png",
+        "des": "OMX Stockholm 30.json"
+    },
+    {
+        "name": "S&P 100",
+        "created": "2024-06-01 12:49:41",
+        "updated": "2024-10-16 16:29:31",
+        "num": 122,
+        "valid": 120,
+        "avatar": "https://flagcdn.com/w320/us.png",
+        "des": "S&P 100.json"
+    },
+    {
+        "name": "S&P 500",
+        "created": "2024-06-01 12:49:40",
+        "updated": "2024-10-16 16:29:31",
+        "num": 515,
+        "valid": 489,
+        "avatar": "https://flagcdn.com/w320/us.png",
+        "des": "S&P 500.json"
+    },
+    {
+        "name": "S&P 600",
+        "created": "2024-06-01 12:49:41",
+        "updated": "2024-10-16 16:29:31",
+        "num": 0,
+        "valid": 0,
+        "avatar": "https://flagcdn.com/w320/us.png",
+        "des": "S&P 600.json"
+    },
+    {
+        "name": "SDAX",
+        "created": "2024-06-01 12:49:40",
+        "updated": "2024-10-16 16:29:31",
+        "num": 94,
+        "valid": 77,
+        "avatar": "https://flagcdn.com/w320/de.png",
+        "des": "SDAX.json"
+    },
+    {
+        "name": "star",
+        "created": "2024-05-30 18:01:13",
+        "updated": "2024-10-16 07:03:27",
+        "num": 76,
+        "valid": 70,
+        "avatar": "https://flagcdn.com/w320/it.png",
+        "des": "star.json"
+    },
+    {
+        "name": "Switzerland 20",
+        "created": "2024-06-01 12:49:40",
+        "updated": "2024-10-16 16:29:31",
+        "num": 29,
+        "valid": 14,
+        "avatar": "https://flagcdn.com/w320/ch.png",
+        "des": "Switzerland 20.json"
+    },
+    {
+        "name": "TECDAX",
+        "created": "2024-06-01 12:49:41",
+        "updated": "2024-10-16 16:29:31",
+        "num": 51,
+        "valid": 40,
+        "avatar": "https://flagcdn.com/w320/de.png",
+        "des": "TECDAX"
+    }
+]

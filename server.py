@@ -46,6 +46,7 @@ logging.error(f"{log_level} : {os.getenv('LOG_LEVEL')}")
 #sys.path.append('../')  # Aggiusta il percorso in base alla tua struttura di cartelle
 
 app = Flask(__name__)
+logger = logging.getLogger(__name__)
 
 # CORS Configuration - Environment-based for dev/prod flexibility
 # Set ALLOWED_ORIGINS env var for production, defaults to permissive for development
@@ -58,8 +59,6 @@ else:
     origins_list = [origin.strip() for origin in allowed_origins.split(',')]
     logger.info(f"CORS restricted to origins: {origins_list}")
     CORS(app, origins=origins_list, supports_credentials=True)
-
-logger = logging.getLogger(__name__)
 
 # Configura il livello di logging per matplotlib
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
@@ -104,7 +103,8 @@ def home():
     return "Ciao, mondo!"
 
 if __name__ == '__main__':
-    app.run(port=os.environ['SERVER_PORT'], debug=True, use_reloader=True)
+    port = int(os.getenv('SERVER_PORT', '5000'))
+    app.run(port=port, debug=True, use_reloader=True)
 
 # GitHub webhook configuration - load from environment
 GITHUB_SECRET = os.environ.get('GITHUB_WEBHOOK_SECRET')

@@ -1,0 +1,164 @@
+[
+    {
+        "name": "AEX",
+        "start": "2000-01-03",
+        "end": "2024-10-10",
+        "des": "AEX.csv"
+    },
+    {
+        "name": "allmib",
+        "start": "2000-01-03",
+        "end": "2024-06-03",
+        "des": "allmib.csv"
+    },
+    {
+        "name": "B&H_DAX",
+        "start": "2010-01-04",
+        "end": "2020-12-30",
+        "des": "B&H_DAX.csv"
+    },
+    {
+        "name": "B&H_star",
+        "start": "2010-01-04",
+        "end": "2020-12-30",
+        "des": "B&H_star.csv"
+    },
+    {
+        "name": "BEL 20",
+        "start": "2000-01-03",
+        "end": "2024-05-31",
+        "des": "BEL 20.csv"
+    },
+    {
+        "name": "buyandhold",
+        "start": null,
+        "end": null,
+        "des": "buyandhold.csv"
+    },
+    {
+        "name": "CAC 40",
+        "start": "2000-01-03",
+        "end": "2024-05-31",
+        "des": "CAC 40.csv"
+    },
+    {
+        "name": "CAC Mid 60",
+        "start": "2000-01-03",
+        "end": "2024-05-31",
+        "des": "CAC Mid 60.csv"
+    },
+    {
+        "name": "dax",
+        "start": "2000-01-03",
+        "end": "2024-05-31",
+        "des": "dax.csv"
+    },
+    {
+        "name": "DOW JONES",
+        "start": "2000-01-03",
+        "end": "2024-05-31",
+        "des": "DOW JONES.csv"
+    },
+    {
+        "name": "EURO STOXX 50",
+        "start": "2000-01-03",
+        "end": "2024-05-31",
+        "des": "EURO STOXX 50.csv"
+    },
+    {
+        "name": "FTSE 100",
+        "start": "2000-01-03",
+        "end": "2024-06-03",
+        "des": "FTSE 100.csv"
+    },
+    {
+        "name": "ftsemib",
+        "start": "2000-01-03",
+        "end": "2024-05-31",
+        "des": "ftsemib.csv"
+    },
+    {
+        "name": "IBEX 35",
+        "start": "2000-01-03",
+        "end": "2024-05-31",
+        "des": "IBEX 35.csv"
+    },
+    {
+        "name": "MDAX",
+        "start": "2000-01-03",
+        "end": "2024-05-31",
+        "des": "MDAX.csv"
+    },
+    {
+        "name": "midcap",
+        "start": "2000-01-03",
+        "end": "2024-05-31",
+        "des": "midcap.csv"
+    },
+    {
+        "name": "MOEX",
+        "start": "2000-01-03",
+        "end": "2024-05-31",
+        "des": "MOEX.csv"
+    },
+    {
+        "name": "NASDAQ 100",
+        "start": "2000-01-03",
+        "end": "2024-06-03",
+        "des": "NASDAQ 100.csv"
+    },
+    {
+        "name": "OMX Helsinki 25",
+        "start": "2000-01-03",
+        "end": "2024-05-31",
+        "des": "OMX Helsinki 25.csv"
+    },
+    {
+        "name": "OMX Stockholm 30",
+        "start": "2000-01-03",
+        "end": "2024-05-31",
+        "des": "OMX Stockholm 30.csv"
+    },
+    {
+        "name": "S&P 100",
+        "start": "2000-01-03",
+        "end": "2024-06-03",
+        "des": "S&P 100.csv"
+    },
+    {
+        "name": "SDAX",
+        "start": "2000-01-03",
+        "end": "2024-05-31",
+        "des": "SDAX.csv"
+    },
+    {
+        "name": "star",
+        "start": "2000-01-03",
+        "end": "2024-05-31",
+        "des": "star.csv"
+    },
+    {
+        "name": "Switzerland 20",
+        "start": "2001-03-07",
+        "end": "2024-05-31",
+        "des": "Switzerland 20.csv"
+    },
+    {
+        "name": "TECDAX",
+        "start": "2000-01-03",
+        "end": "2024-05-31",
+        "des": "TECDAX.csv"
+    },
+    {
+        "name": "tit-esp",
+        "start": "2010-05-03",
+        "end": "2020-11-30",
+        "des": "tit-esp.csv"
+    },
+    {
+        "name": "tit-lin",
+        "start": "2011-05-02",
+        "end": "2020-11-30",
+        "des": "tit-lin.csv"
+    }
+]

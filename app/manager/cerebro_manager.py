@@ -24,14 +24,7 @@ import re
 logger = logging.getLogger(__name__)
 # Configurazione di base del logging
 logging.basicConfig(level=logging.DEBUG)
-
-symbol = al_data.AlpacaLiveData(
-                symbol='AZN',
-                api_key=os.environ.get('ALPACA_API_KEY',''),
-                secret_key=os.environ.get('ALPACA_SECRET_KEY',''),
-                timeframe=bt.TimeFrame.Minutes,
-                compression=1
-            )
+symbol = None
 
 @dataclass
 class CerebroInstance:
@@ -101,7 +94,7 @@ class CerebroInstance:
             data = al_data.AlpacaLiveData(
                 symbol=stock['symbol'],
                 api_key=self.API_KEY,
-                secret_key=self.API_SECRET,
+                secret_key=self.SECRET_KEY,
                 timeframe=bt.TimeFrame.Minutes,
                 compression=1
             )
@@ -119,7 +112,7 @@ class CerebroInstance:
                 # Configura il broker personalizzato per Alpaca
             broker = al.AlpacaBroker(
                 api_key=self.API_KEY,
-                secret_key=self.API_SECRET,
+                secret_key=self.SECRET_KEY,
                 paper=True,
                 commission_perc=0.1,  # 0.1% di commissione
                 commission_fixed=5.0  # $5 di commissione fissa
@@ -131,7 +124,7 @@ class CerebroInstance:
                 # Configura il broker personalizzato per Alpaca
             broker = al.AlpacaBroker(
                 api_key=self.API_KEY,
-                secret_key=self.API_SECRET,
+                secret_key=self.SECRET_KEY,
                 paper=False,
                 commission_perc=0.1,  # 0.1% di commissione
                 commission_fixed=5.0  # $5 di commissione fissa
@@ -170,10 +163,6 @@ class CerebroManager:
     def __init__(self):
         self.instances = {}  # Dizionario delle istanze: {nome: CerebroInstance}
         self.lock = threading.Lock()  # Per gestire l'accesso concorrente
-        # Crea un'istanza di Cerebro
-        self.create_instance(name="Alpaca", feed_list="NASDAQ 100", 
-                             broker_name="alpaca-paper", strategy_name="weekly.RMAStrategy")
-        #self.start_instance(name="Alpaca")
 
     def create_instance(self, name: str, feed_list: str, broker_name: str, strategy_name: str):
         with self.lock:

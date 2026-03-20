@@ -73,34 +73,15 @@ def benchmark(list_name):
     # 'data' dovrebbe essere un array, quindi puoi usare la funzione len() per ottenere il numero di elementi
     number_of_elements = len(data)
 
-    # Converti il dizionario JSON in una lista di argomenti da riga di comando
-    # Ad esempio, converte {"param1": "val1", "param2": "val2"} in ["--param1", "val1", "--param2", "val2"]
-    args = []
     operation_id = str(uuid4())
 
-    #Il cash deve essere 10000+1% per titolo 
-    args.append(f'--cash')
+    # Il cash deve essere 10000+1% per titolo
     cash = number_of_elements*10001
-    args.append(f"{cash}")
-
-    args.append(f'--amount')
-    args.append("10000")
-
-    args.append(f'--fromdate')
-    args.append('2000-01-01')
-
-    args.append(f'--id')
-    args.append(str(operation_id))
-    args.append(f'--strat')
-    args.append(f'generic.BuyAndHold')
-    args.append(f'--commission') 
-    args.append(f'fineco')
-    args.append(f'--ticker')
-    args.append(f'{list_name}.json')
  
     dati = { "id":str(operation_id),"strategia":{"label":"BuyAndHold","value":"generic.BuyAndHold"},
              "tickerList":{"value":f"{list_name}.json","label":list_name},"cash": cash, "da":"2000-01-01", "importoOperazioni":10000, "benchmark":"benchmark"}
-    mn_srv.runstrat_background(dati, args)
+    run_config = mn_srv.json2config(operation_id, dati)
+    mn_srv.runstrat_background(dati, run_config)
 
     # Rispondi al frontend
     return jsonify({"id": operation_id, "status": "success", "message": "Dati ricevuti con successo","Dati":data})

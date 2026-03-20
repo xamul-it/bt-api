@@ -1,77 +1,60 @@
-# Percorso relativo al file JSON dei ticker
 import os
-
-# Ottenere il percorso del file corrente
-current_file_path = os.path.abspath(__file__)
-
-# Ottenere il percorso della directory del file corrente
-current_directory = os.path.dirname(current_file_path)
-
-# Root path sarà il percorso della directory superiore
-root_path = os.path.abspath(os.path.join(current_directory, '..'))
-
-# Percorso relativo al file JSON
-CONFIG_PATH = os.path.join(root_path,  'config')
-
-TICKER_PATH = os.path.join(CONFIG_PATH,  'data')
-
-TICKERLIST_PATH = os.path.join(CONFIG_PATH,  'tickers')
-
-# Percorso relativo al file JSON
-OUT_PATH = os.path.join(root_path,  'out')
-
-# Percorso relativo al file JSON
-BENCHMARK_PATH = os.path.join(CONFIG_PATH,  'benchmark')
-
-# Percorso relativo al file JSON
-DATA_PATH = os.path.join(CONFIG_PATH,  'stored')
-
-# Percorso relativo al file JSON
-SCHEDULE_PATH = os.path.join(CONFIG_PATH,  'schedule')
-
-# Percorso relativo al file JSON con le liste ticker
-TICKER_LISTS_FILE = os.path.join(CONFIG_PATH, 'tickers.json')
-
-# Percorso relativo al file JSON con i ticker
-TICKER_FILE = os.path.join(CONFIG_PATH, 'ticker.json')
-
-# Percorso relativo al file JSON
-STRATEGIES_FILE = os.path.join(CONFIG_PATH, 'strategies.json')
-
-# Percorso relativo al file JSON
-BENCHMARK_FILE = os.path.join(CONFIG_PATH, 'benchmarks.json')
+from pathlib import Path
 
 
-# Definisci una variabile globale per tenere traccia dello stato di importazione
+CURRENT_DIRECTORY = Path(__file__).resolve().parent
+API_ROOT = CURRENT_DIRECTORY.parent
+WORKSPACE_ROOT = API_ROOT.parent
+
+# Shared config (common for core + api)
+SHARED_CONFIG_PATH = Path(
+    os.getenv('BT_SHARED_CONFIG', str(WORKSPACE_ROOT / 'config-common'))
+).expanduser()
+
+# API-specific runtime/config folder
+CONFIG_PATH = Path(
+    os.getenv('BT_API_CONFIG', str(API_ROOT / 'config'))
+).expanduser()
+
+TICKER_PATH = SHARED_CONFIG_PATH / 'data'
+TICKERLIST_PATH = SHARED_CONFIG_PATH / 'tickers'
+BENCHMARK_PATH = SHARED_CONFIG_PATH / 'benchmark'
+
+OUT_PATH = API_ROOT / 'out'
+DATA_PATH = CONFIG_PATH / 'stored'
+SCHEDULE_PATH = CONFIG_PATH / 'schedule'
+
+TICKER_LISTS_FILE = CONFIG_PATH / 'tickers.json'
+TICKER_FILE = CONFIG_PATH / 'ticker.json'
+STRATEGIES_FILE = CONFIG_PATH / 'strategies.json'
+BENCHMARK_FILE = CONFIG_PATH / 'benchmarks.json'
+
+# Keep str compatibility for legacy os.path usage across the app.
+CONFIG_PATH = str(CONFIG_PATH)
+TICKER_PATH = str(TICKER_PATH)
+TICKERLIST_PATH = str(TICKERLIST_PATH)
+OUT_PATH = str(OUT_PATH)
+BENCHMARK_PATH = str(BENCHMARK_PATH)
+DATA_PATH = str(DATA_PATH)
+SCHEDULE_PATH = str(SCHEDULE_PATH)
+TICKER_LISTS_FILE = str(TICKER_LISTS_FILE)
+TICKER_FILE = str(TICKER_FILE)
+STRATEGIES_FILE = str(STRATEGIES_FILE)
+BENCHMARK_FILE = str(BENCHMARK_FILE)
+
+
 CONFIG_IMPORTED = False
 
-# Esegui l'azione solo al primo import
 if not CONFIG_IMPORTED:
-
-    # Imposta la variabile globale a True per indicare che il file è stato importato
     CONFIG_IMPORTED = True
 
-    if not os.path.exists(DATA_PATH):
-        os.makedirs(DATA_PATH)
-
-    if not os.path.exists(SCHEDULE_PATH):
-        os.makedirs(SCHEDULE_PATH)
-
-    if not os.path.exists(TICKERLIST_PATH):
-        os.makedirs(TICKERLIST_PATH)
-
-    if not os.path.exists(BENCHMARK_PATH):
-        os.makedirs(BENCHMARK_PATH)
-
-    if not os.path.exists(OUT_PATH):
-        os.makedirs(OUT_PATH)
-
-    if not os.path.exists(TICKERLIST_PATH):
-        os.makedirs(TICKERLIST_PATH)
-
-    if not os.path.exists(CONFIG_PATH):
-        os.makedirs(CONFIG_PATH)
-
-    if not os.path.exists(TICKER_PATH):
-        os.makedirs(TICKER_PATH)
-
+    for path in (
+        DATA_PATH,
+        SCHEDULE_PATH,
+        TICKERLIST_PATH,
+        BENCHMARK_PATH,
+        OUT_PATH,
+        CONFIG_PATH,
+        TICKER_PATH,
+    ):
+        os.makedirs(path, exist_ok=True)

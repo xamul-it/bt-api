@@ -8,6 +8,7 @@ import shutil
 import app.service.main_service as srv
 from app.service.EventEmitter import EventEmitter
 import logging
+from dataclasses import asdict
 
 
 mn = Blueprint('main', __name__)
@@ -24,12 +25,21 @@ def main():
     data = request.json
     operation_id = str(uuid4())
 
-    args = srv.json2args(operation_id,data)
+    try:
+        run_config = srv.json2config(operation_id, data)
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
 
     data["id"] = str(operation_id)
-    srv.runstrat_background(data, args)
+    srv.runstrat_background(data, run_config)
     # Rispondi al frontend
-    return jsonify({"id": operation_id, "status": "success", "message": "Dati ricevuti con successo","Dati":data})
+    return jsonify({
+        "id": operation_id,
+        "status": "success",
+        "message": "Dati ricevuti con successo",
+        "Dati": data,
+        "run_config": asdict(run_config),
+    })
 
 @mn.route('/stato_chiamate', methods=['GET'])
 def stato_chiamate():

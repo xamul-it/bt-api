@@ -21,6 +21,7 @@ import app.service.main_service as mn_srv
 import json
 from datetime import datetime, timedelta
 from app.service.EventEmitter import EventEmitter
+from dataclasses import asdict
 
 # Whitelist of allowed modules for dynamic imports (security)
 ALLOWED_MODULES = {
@@ -80,8 +81,7 @@ def load_jobs(data=None):
                     # Carica il file JSON in un dizionario
                     data = json.load(json_file)
                     del(data["end"])
-                    args=mn_srv.json2args(data["id"],data["args"])
-                    #args=data["args"]
+                    run_config = mn_srv.json2config(data["id"], data["args"])
                     id = data["id"]
 
                     type = data["scheduleType"]["value"]
@@ -93,9 +93,16 @@ def load_jobs(data=None):
                         trigger=CronTrigger(day_of_week='fri', hour=20, minute=0)
                     
                     #trigger=DateTrigger(run_date=datetime.now())
-                    logger.debug(f"Avvio schedulazioni {id}:{trigger}:{args}")
+                    logger.debug(f"Avvio schedulazioni {id}:{trigger}:{run_config}")
                     # Sovrascrive il job esistente con lo stesso id)
-                    scheduler.add_job(mn_srv.runstrat, trigger=trigger, id=id, args=[args], replace_existing=True, max_instances=1)
+                    scheduler.add_job(
+                        mn_srv.runstrat,
+                        trigger=trigger,
+                        id=id,
+                        args=[asdict(run_config)],
+                        replace_existing=True,
+                        max_instances=1
+                    )
     
                 except Exception  as e:
                     logger.exception(f"Errore nel parsing del file {filename}")

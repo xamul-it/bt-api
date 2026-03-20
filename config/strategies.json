@@ -1,0 +1,281 @@
+[
+    {
+        "label": "EnhancedRMAStrategy",
+        "value": "ml_enhanced.EnhancedRMAStrategy"
+    },
+    {
+        "label": "Candle",
+        "value": "candle.Candle"
+    },
+    {
+        "label": "CandleBS",
+        "value": "candle.CandleBS"
+    },
+    {
+        "label": "CandleX2",
+        "value": "candle.CandleX2"
+    },
+    {
+        "label": "ATRCandle",
+        "value": "candle_old.ATRCandle"
+    },
+    {
+        "label": "CandleX",
+        "value": "candle_old.CandleX"
+    },
+    {
+        "label": "POWCandle",
+        "value": "candle_old.POWCandle"
+    },
+    {
+        "label": "AWOMulti",
+        "value": "dev_strategies.AWOMulti"
+    },
+    {
+        "label": "Bolli",
+        "value": "dev_strategies.Bolli"
+    },
+    {
+        "label": "BuyAndHold_1",
+        "value": "dev_strategies.BuyAndHold_1"
+    },
+    {
+        "label": "BuyAndHold_More",
+        "value": "dev_strategies.BuyAndHold_More"
+    },
+    {
+        "label": "Candledev2",
+        "value": "dev_strategies.Candledev2"
+    },
+    {
+        "label": "CryptoStochRSI",
+        "value": "dev_strategies.CryptoStochRSI"
+    },
+    {
+        "label": "DCandle",
+        "value": "dev_strategies.DCandle"
+    },
+    {
+        "label": "Dow_test",
+        "value": "dev_strategies.Dow_test"
+    },
+    {
+        "label": "EMA",
+        "value": "dev_strategies.EMA"
+    },
+    {
+        "label": "HMA",
+        "value": "dev_strategies.HMA"
+    },
+    {
+        "label": "HMAE",
+        "value": "dev_strategies.HMAE"
+    },
+    {
+        "label": "HMAST",
+        "value": "dev_strategies.HMAST"
+    },
+    {
+        "label": "HMAT",
+        "value": "dev_strategies.HMAT"
+    },
+    {
+        "label": "MACD",
+        "value": "dev_strategies.MACD"
+    },
+    {
+        "label": "MACDExcelMulti",
+        "value": "dev_strategies.MACDExcelMulti"
+    },
+    {
+        "label": "MACDHMA",
+        "value": "dev_strategies.MACDHMA"
+    },
+    {
+        "label": "MACDHisto",
+        "value": "dev_strategies.MACDHisto"
+    },
+    {
+        "label": "MA_CrossOver",
+        "value": "dev_strategies.MA_CrossOver"
+    },
+    {
+        "label": "ML1",
+        "value": "dev_strategies.ML1"
+    },
+    {
+        "label": "MOMS",
+        "value": "dev_strategies.MOMS"
+    },
+    {
+        "label": "MOMT",
+        "value": "dev_strategies.MOMT"
+    },
+    {
+        "label": "Mix",
+        "value": "dev_strategies.Mix"
+    },
+    {
+        "label": "MyHullMovingAverage",
+        "value": "dev_strategies.MyHullMovingAverage"
+    },
+    {
+        "label": "RSIA",
+        "value": "dev_strategies.RSIA"
+    },
+    {
+        "label": "SMA_CrossOver",
+        "value": "dev_strategies.SMA_CrossOver"
+    },
+    {
+        "label": "Settimanale2",
+        "value": "dev_strategies.Settimanale2"
+    },
+    {
+        "label": "SettimanaleEsp2",
+        "value": "dev_strategies.SettimanaleEsp2"
+    },
+    {
+        "label": "SettimanaleMACD",
+        "value": "dev_strategies.SettimanaleMACD"
+    },
+    {
+        "label": "SmaCross",
+        "value": "dev_strategies.SmaCross"
+    },
+    {
+        "label": "SmashDay",
+        "value": "dev_strategies.SmashDay"
+    },
+    {
+        "label": "St",
+        "value": "dev_strategies.St"
+    },
+    {
+        "label": "St2",
+        "value": "dev_strategies.St2"
+    },
+    {
+        "label": "St_orig",
+        "value": "dev_strategies.St_orig"
+    },
+    {
+        "label": "Stc",
+        "value": "dev_strategies.Stc"
+    },
+    {
+        "label": "SuperTrend",
+        "value": "dev_strategies.SuperTrend"
+    },
+    {
+        "label": "TestMulti",
+        "value": "dev_strategies.TestMulti"
+    },
+    {
+        "label": "ThreeSouthStar",
+        "value": "dev_strategies.ThreeSouthStar"
+    },
+    {
+        "label": "TobinHold",
+        "value": "dev_strategies.TobinHold"
+    },
+    {
+        "label": "Volume",
+        "value": "dev_strategies.Volume"
+    },
+    {
+        "label": "indicators",
+        "value": "dev_strategies.indicators"
+    },
+    {
+        "label": "splitMACDStrategy",
+        "value": "dev_strategies.splitMACDStrategy"
+    },
+    {
+        "label": "splitMAStrategy",
+        "value": "dev_strategies.splitMAStrategy"
+    },
+    {
+        "label": "Gap",
+        "value": "gap.Gap"
+    },
+    {
+        "label": "BuyAndHold",
+        "value": "generic.BuyAndHold"
+    },
+    {
+        "label": "BuyCloseSellOpen",
+        "value": "generic.BuyCloseSellOpen"
+    },
+    {
+        "label": "BuyOpenSellClose",
+        "value": "generic.BuyOpenSellClose"
+    },
+    {
+        "label": "OpenGap",
+        "value": "generic.OpenGap"
+    },
+    {
+        "label": "RSI",
+        "value": "generic.RSI"
+    },
+    {
+        "label": "Test",
+        "value": "generic.Test"
+    },
+    {
+        "label": "Test Alpaca",
+        "value": "generic.TestAlpa  ca"
+    },
+    {
+        "label": "Treshold",
+        "value": "generic.Treshold"
+    },
+    {
+        "label": "FTSECandle",
+        "value": "intraday.FTSECandle"
+    },
+    {
+        "label": "Intraday",
+        "value": "intraday.Intraday"
+    },
+    {
+        "label": "limit_profit",
+        "value": "limit_profit.limit_profit"
+    },
+    {
+        "label": "MultiTickerStrategy",
+        "value": "multiTickerStrategy.MultiTickerStrategy"
+    },
+    {
+        "label": "ETFStrategy",
+        "value": "weekly.ETFStrategy"
+    },
+    {
+        "label": "RMAStrategy",
+        "value": "weekly.RMAStrategy"
+    },{
+        "label": "EnhancedRMAStrategy",
+        "value": "weekly.EnhancedRMAStrategy"
+    },
+    {
+        "label": "RegTalib",
+        "value": "weekly.RegTalib"
+    },
+    {
+        "label": "SettimanaleEsp",
+        "value": "weekly.SettimanaleEsp"
+    },
+    {
+        "label": "SettimanaleFast",
+        "value": "weekly.SettimanaleFast"
+    },
+    {
+        "label": "SettimanaleLin",
+        "value": "weekly.SettimanaleLin"
+    },
+    {
+        "label": "SettimanaleReg",
+        "value": "weekly.SettimanaleReg"
+    }
+]

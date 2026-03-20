@@ -98,7 +98,8 @@ def home():
 
 
 if __name__ == '__main__':
-    app.run(port=os.environ['SERVER_PORT'], debug=True, use_reloader=True)
+    port = int(os.getenv('SERVER_PORT', '5000'))
+    app.run(port=port, debug=True, use_reloader=True)
 
 
 GITHUB_SECRET = b'ssQroXoUKHRspjsONB9bQiyHmjK6nrh1'  # Sostituisci con il secret configurato nel webhook GitHub
