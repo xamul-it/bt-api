@@ -6,12 +6,14 @@ from threading import Thread
 import logging
 
 from bt_api import BacktestConfig, run_backtest
+from watchtower_runtime import WatchtowerRepository, build_outpath, evaluate_outcomes
 from app.service.EventEmitter import EventEmitter
-from app.paths import DATA_PATH
+from app.paths import DATA_PATH, OUT_PATH
 
 
 emitter = EventEmitter()
 logger = logging.getLogger(__name__)
+repo = WatchtowerRepository()
 
 
 _VALID_MODES = {"backtest", "paper", "shadow", "live"}
@@ -111,6 +113,68 @@ def _coerce_run_config(run_config):
     raise ValueError(f"Configurazione run non supportata: {type(run_config).__name__}")
 
 
+def _run_outpath(run_config):
+    return build_outpath(OUT_PATH, run_config.strat, run_config.id)
+
+
+def _strategy_fingerprint(data, run_config):
+    if isinstance(data, dict):
+        explicit = data.get("strategy_fingerprint") or data.get("statVersion")
+        if explicit:
+            return str(explicit)
+        if isinstance(data.get("args"), dict):
+            explicit = data["args"].get("strategy_fingerprint") or data["args"].get("statVersion")
+            if explicit:
+                return str(explicit)
+    return "v1"
+
+
+def _persist_run_state(data, run_config, status=None):
+    if not repo.available():
+        return
+    payload = {
+        "id": data["id"],
+        "args": data.get("args", {}),
+        "metadata": {
+            "errorMessage": data.get("errorMessage"),
+            "descizione": data.get("descizione"),
+        },
+        "status": status or data.get("stato"),
+        "started_at": datetime.fromtimestamp(data["start"] / 1000) if data.get("start") else None,
+        "finished_at": datetime.fromtimestamp(data["end"] / 1000) if data.get("end") else None,
+        "pinned": bool(data.get("pinned")),
+        "outpath": _run_outpath(run_config),
+        "strategy_fingerprint": _strategy_fingerprint(data, run_config),
+    }
+    try:
+        repo.upsert_run(payload)
+    except Exception:
+        logger.exception("Errore nel persistere lo stato run %s", data["id"])
+
+
+def _ingest_completed_run(data, run_config):
+    if not repo.available():
+        return
+    outpath = _run_outpath(run_config)
+    try:
+        repo.ingest_run_directory(data["id"], outpath)
+        baseline = repo.baseline_for_run(data["id"])
+        current_outcomes = repo.load_trade_outcomes(data["id"])
+        pnl_values = [float(row["pnl_percent"]) for row in current_outcomes if row.get("pnl_percent") is not None]
+        check = evaluate_outcomes(pnl_values, baseline.get("metrics") if baseline else None)
+        repo.persist_stat_check(
+            data["id"],
+            check,
+            source_meta={
+                "baseline_found": bool(baseline),
+                "outpath": outpath,
+                "trade_count": len(pnl_values),
+            },
+        )
+    except Exception:
+        logger.exception("Errore nell'ingest run DB/stat check %s", data["id"])
+
+
 def runstrat(run_config):
     """
     Wrapper usato anche dallo scheduler.
@@ -134,6 +198,7 @@ def runstrat_background(data, run_config=None):
     tdata["stato"] = "In esecuzione"
     tdata["pinned"] = False
     tdata["descizione"] = ""
+    _persist_run_state(tdata, run_config, status=tdata["stato"])
 
     thread = Thread(target=btrunstrat, args=(tdata, run_config))
     thread.start()
@@ -146,15 +211,20 @@ def btrunstrat(data, run_config):
     """Funzione wrapper per eseguire runstrat in un thread separato e tenere traccia dello stato."""
     try:
         data["start"] = int(datetime.now().timestamp() * 1000)
+        _persist_run_state(data, run_config, status="In esecuzione")
         runstrat(run_config)
     except Exception as e:
         logger.exception("Errore nell'eseguire la strategia")
         data["stato"] = "Errore"
         data["errorMessage"] = f"{e}"
+        data["end"] = int(datetime.now().timestamp() * 1000)
+        _persist_run_state(data, run_config, status=data["stato"])
         emitter.emit(emitter.EV_UPDATED_RUNS, data)
     else:
         data["stato"] = "Completato"
         data["end"] = int(datetime.now().timestamp() * 1000)
+        _persist_run_state(data, run_config, status=data["stato"])
+        _ingest_completed_run(data, run_config)
         emitter.emit(emitter.EV_UPDATED_RUNS, data)
         logger.debug("Fine elaborazione")
 
@@ -205,9 +275,18 @@ def load_data():
     if loaded_count == 0 and len([f for f in os.listdir(DATA_PATH) if f.endswith('.json')]) > 0:
         raise RuntimeError(f"No valid JSON files could be loaded from {DATA_PATH}")
 
+    if repo.available():
+        try:
+            for row in repo.fetch_runs(include_deleted=False, limit=500):
+                runs[row["run_id"]] = row
+        except Exception:
+            logger.exception("Errore nel caricare run persistite dal DB")
+
 
 def save_data(data):
     if data["id"] not in runs and "stato" in data:
+        runs[data["id"]] = data
+    else:
         runs[data["id"]] = data
 
     filtered_runs = {key: run for key, run in runs.items() if run.get('pinned')}
@@ -217,6 +296,17 @@ def save_data(data):
         file = os.path.join(DATA_PATH, f'{run_id}.json')
         with open(file, 'w') as f:
             json.dump(filtered_runs, f)
+
+    run_config = None
+    if isinstance(data.get("args"), dict):
+        raw_config = data["args"].get("run_config")
+        if isinstance(raw_config, dict):
+            try:
+                run_config = BacktestConfig(**raw_config)
+            except Exception:
+                run_config = None
+    if run_config is not None:
+        _persist_run_state(data, run_config)
 
 
 emitter.on(emitter.EV_UPDATED_RUNS, save_data)

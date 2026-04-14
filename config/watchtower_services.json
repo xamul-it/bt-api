@@ -1,0 +1,10 @@
+{
+  "services": [
+    "bt-live-event-writer.service",
+    "bt-watchtower.service",
+    "parallel-sim.service",
+    "parallel-sim-eod.service",
+    "zmq-proxy.service",
+    "zmq-logger.service"
+  ]
+}

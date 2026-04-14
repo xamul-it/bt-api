@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
 #from alpaca_trade_api import REST
 from app.manager.cerebro_manager import CerebroManager
+from app.paths import CONFIG_PATH
 
 from alpaca.trading.client import TradingClient
 from alpaca.data.historical import StockHistoricalDataClient
@@ -12,6 +13,8 @@ from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
 import os
 import requests
+import json
+from pathlib import Path
 
 
 al_bp = Blueprint('live', __name__)
@@ -25,6 +28,8 @@ BASE_URL = 'https://paper-api.alpaca.markets'
 # Set DISABLE_SSL_VERIFY=true only if you have SSL interception issues
 # WARNING: Disabling SSL verification exposes you to MITM attacks
 DISABLE_SSL_VERIFY = os.environ.get('DISABLE_SSL_VERIFY', 'false').lower() in ('true', '1', 'yes')
+ALPACA_CACHE_DIR = Path(CONFIG_PATH) / 'alpaca_cache'
+ALPACA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Security: Origin validation for live trading endpoints
 # Set ALLOWED_ORIGINS in production, leave unset for development
@@ -83,6 +88,160 @@ def _alpaca_get(path, params=None):
         return resp.json(), None
     except ValueError:
         return None, ('Invalid JSON from Alpaca', 502)
+
+
+def _to_bool(value, default=False):
+    if value is None:
+        return default
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _load_json(path, default):
+    try:
+        with open(path, 'r') as handle:
+            return json.load(handle)
+    except FileNotFoundError:
+        return default
+    except Exception:
+        logger.exception("Unable to load cache file %s", path)
+        return default
+
+
+def _save_json(path, payload):
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, 'w') as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)
+
+
+def _portfolio_history_cache_path(timeframe, intraday_reporting):
+    safe_reporting = str(intraday_reporting or 'market_hours').replace('/', '_')
+    safe_timeframe = str(timeframe or '1Min').replace('/', '_')
+    return ALPACA_CACHE_DIR / f'portfolio_history__{safe_timeframe}__{safe_reporting}.json'
+
+
+def _activities_cache_path():
+    return ALPACA_CACHE_DIR / 'activities.json'
+
+
+def _merge_history_points(cache_payload, points, timeframe, intraday_reporting, base_value):
+    by_timestamp = {
+        point['timestamp']: point
+        for point in cache_payload.get('points', [])
+        if point.get('timestamp')
+    }
+    for point in points:
+        timestamp = point.get('timestamp')
+        if timestamp:
+            by_timestamp[timestamp] = point
+
+    merged_points = [by_timestamp[key] for key in sorted(by_timestamp.keys())]
+    return {
+        'timeframe': timeframe,
+        'intraday_reporting': intraday_reporting,
+        'base_value': base_value,
+        'points': merged_points,
+        'updated_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+    }
+
+
+def _filter_history_points(points, start_iso=None, end_iso=None):
+    filtered = []
+    start_ts = datetime.fromisoformat(start_iso.replace('Z', '+00:00')) if start_iso else None
+    end_ts = datetime.fromisoformat(end_iso.replace('Z', '+00:00')) if end_iso else None
+
+    for point in points:
+        timestamp = point.get('timestamp')
+        if not timestamp:
+            continue
+        point_ts = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+        if start_ts and point_ts < start_ts:
+            continue
+        if end_ts and point_ts > end_ts:
+            continue
+        filtered.append(point)
+    return filtered
+
+
+def _history_response(points, timeframe, base_value, cache_metadata=None):
+    raw_timestamps = []
+    raw_equity = []
+    raw_profit_loss = []
+    raw_profit_loss_pct = []
+
+    for point in points:
+        timestamp = point.get('timestamp')
+        if timestamp:
+            raw_timestamps.append(int(datetime.fromisoformat(timestamp.replace('Z', '+00:00')).timestamp()))
+        raw_equity.append(point.get('equity'))
+        raw_profit_loss.append(point.get('profit_loss'))
+        raw_profit_loss_pct.append(point.get('profit_loss_pct'))
+
+    return {
+        'timeframe': timeframe,
+        'base_value': base_value,
+        'currency': 'USD',
+        'points': points,
+        'raw': {
+            'timestamp': raw_timestamps,
+            'equity': raw_equity,
+            'profit_loss': raw_profit_loss,
+            'profit_loss_pct': raw_profit_loss_pct,
+        },
+        'cache': cache_metadata or {},
+    }
+
+
+def _upsert_activities_cache(activities):
+    cache_path = _activities_cache_path()
+    cache_payload = _load_json(cache_path, {'activities': [], 'updated_at': None})
+    by_id = {
+        activity['id']: activity
+        for activity in cache_payload.get('activities', [])
+        if activity.get('id')
+    }
+    for activity in activities:
+        activity_id = activity.get('id')
+        if activity_id:
+            by_id[activity_id] = activity
+
+    merged = [by_id[key] for key in sorted(by_id.keys())]
+    payload = {
+        'activities': merged,
+        'updated_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+    }
+    _save_json(cache_path, payload)
+    return payload
+
+
+def _filter_cached_activities(cached_activities, params, symbol_filter=None):
+    activity_types = [t.strip() for t in str(params.get('activity_types', 'FILL')).split(',') if t.strip()]
+    after = params.get('after')
+    until = params.get('until')
+    date = params.get('date')
+
+    after_ts = datetime.fromisoformat(after.replace('Z', '+00:00')) if after else None
+    until_ts = datetime.fromisoformat(until.replace('Z', '+00:00')) if until else None
+
+    filtered = []
+    for activity in cached_activities:
+        if activity_types and activity.get('activity_type') not in activity_types:
+            continue
+        if symbol_filter and activity.get('symbol') != symbol_filter:
+            continue
+
+        timestamp = activity.get('timestamp')
+        if timestamp:
+            point_ts = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            if after_ts and point_ts < after_ts:
+                continue
+            if until_ts and point_ts > until_ts:
+                continue
+            if date and timestamp[:10] != date[:10]:
+                continue
+
+        filtered.append(activity)
+    return filtered
 
 
 @al_bp.before_request
@@ -155,16 +314,73 @@ def get_portfolio_history():
         'pnl_reset': request.args.get('pnl_reset', 'per_day'),
         'extended_hours': request.args.get('extended_hours', 'false').lower(),
     }
+    prefer_cache = _to_bool(request.args.get('prefer_cache'), default=False)
 
-    date_end = request.args.get('date_end')
-    normalized_date_end = _iso_or_none(date_end)
-    if date_end and not normalized_date_end:
-        return jsonify({'error': 'Invalid date_end. Use ISO8601 format.'}), 400
-    if normalized_date_end:
-        params['date_end'] = normalized_date_end
+    start = request.args.get('start') or request.args.get('date_start')
+    normalized_start = _iso_or_none(start)
+    if start and not normalized_start:
+        return jsonify({'error': 'Invalid start. Use ISO8601 format.'}), 400
+    if normalized_start:
+        params['start'] = normalized_start
+
+    end = request.args.get('end') or request.args.get('date_end')
+    normalized_end = _iso_or_none(end)
+    if end and not normalized_end:
+        return jsonify({'error': 'Invalid end. Use ISO8601 format.'}), 400
+    if normalized_end:
+        params['end'] = normalized_end
+
+    if normalized_start and normalized_end:
+        params.pop('period', None)
+
+    cache_path = _portfolio_history_cache_path(params['timeframe'], params['intraday_reporting'])
+    cache_payload = _load_json(cache_path, {
+        'timeframe': params['timeframe'],
+        'intraday_reporting': params['intraday_reporting'],
+        'base_value': None,
+        'points': [],
+        'updated_at': None,
+    })
+
+    if prefer_cache and cache_payload.get('points'):
+        cached_points = _filter_history_points(
+            cache_payload.get('points', []),
+            start_iso=normalized_start,
+            end_iso=normalized_end,
+        )
+        if cached_points:
+            return jsonify(_history_response(
+                cached_points,
+                cache_payload.get('timeframe'),
+                cache_payload.get('base_value'),
+                cache_metadata={
+                    'mode': 'local',
+                    'path': str(cache_path),
+                    'updated_at': cache_payload.get('updated_at'),
+                    'points': len(cached_points),
+                }
+            ))
 
     payload, error = _alpaca_get('/v2/account/portfolio/history', params=params)
     if error:
+        cached_points = _filter_history_points(
+            cache_payload.get('points', []),
+            start_iso=normalized_start,
+            end_iso=normalized_end,
+        )
+        if cached_points:
+            return jsonify(_history_response(
+                cached_points,
+                cache_payload.get('timeframe'),
+                cache_payload.get('base_value'),
+                cache_metadata={
+                    'mode': 'local-fallback',
+                    'path': str(cache_path),
+                    'updated_at': cache_payload.get('updated_at'),
+                    'points': len(cached_points),
+                    'remote_error': error[0],
+                }
+            ))
         return jsonify({'error': error[0]}), error[1]
 
     timestamps = payload.get('timestamp', [])
@@ -183,26 +399,38 @@ def get_portfolio_history():
             'profit_loss_pct': profit_loss_pct[idx] if idx < len(profit_loss_pct) else None,
         })
 
-    return jsonify({
-        'timeframe': payload.get('timeframe'),
-        'base_value': base_value,
-        'currency': 'USD',
-        'points': points,
-        'raw': {
-            'timestamp': timestamps,
-            'equity': equity,
-            'profit_loss': profit_loss,
-            'profit_loss_pct': profit_loss_pct,
-        },
-    })
+    merged_cache = _merge_history_points(
+        cache_payload,
+        points,
+        payload.get('timeframe') or params['timeframe'],
+        params['intraday_reporting'],
+        base_value,
+    )
+    _save_json(cache_path, merged_cache)
+
+    return jsonify(_history_response(
+        points,
+        payload.get('timeframe'),
+        base_value,
+        cache_metadata={
+            'mode': 'remote+cached',
+            'path': str(cache_path),
+            'updated_at': merged_cache.get('updated_at'),
+            'points': len(points),
+            'stored_points': len(merged_cache.get('points', [])),
+        }
+    ))
 
 
 @al_bp.route('/activities', methods=['GET'])
 def get_activities():
+    page_size = min(int(request.args.get('page_size', '100')), 100)
+    fetch_all = _to_bool(request.args.get('fetch_all'), default=True)
+    max_pages = max(1, min(int(request.args.get('max_pages', '20')), 100))
     params = {
         'activity_types': request.args.get('activity_types', 'FILL'),
         'direction': request.args.get('direction', 'desc'),
-        'page_size': request.args.get('page_size', '200'),
+        'page_size': page_size,
     }
 
     date = request.args.get('date')
@@ -230,39 +458,120 @@ def get_activities():
     if page_token:
         params['page_token'] = page_token
 
-    payload, error = _alpaca_get('/v2/account/activities', params=params)
-    if error:
-        return jsonify({'error': error[0]}), error[1]
-
     symbol_filter = request.args.get('symbol')
+    prefer_cache = _to_bool(request.args.get('prefer_cache'), default=False)
     activities = []
+    pages_loaded = 0
+    next_page_token = params.get('page_token')
+    truncated = False
+    cache_path = _activities_cache_path()
+    cache_payload = _load_json(cache_path, {'activities': [], 'updated_at': None})
 
-    for activity in payload if isinstance(payload, list) else []:
-        symbol = activity.get('symbol')
-        if symbol_filter and symbol != symbol_filter:
-            continue
-
-        qty = activity.get('qty')
-        price = activity.get('price')
-        side = activity.get('side')
-        transaction_time = _iso_or_none(activity.get('transaction_time'))
-
-        activities.append({
-            'id': activity.get('id'),
-            'activity_type': activity.get('activity_type'),
-            'symbol': symbol,
-            'side': side,
-            'qty': float(qty) if qty is not None else None,
-            'price': float(price) if price is not None else None,
-            'notional': float(activity.get('net_amount')) if activity.get('net_amount') is not None else None,
-            'timestamp': transaction_time,
-            'order_id': activity.get('order_id'),
-            'raw': activity,
+    if prefer_cache and cache_payload.get('activities'):
+        activities = _filter_cached_activities(cache_payload.get('activities', []), params, symbol_filter=symbol_filter)
+        return jsonify({
+            'activities': activities,
+            'count': len(activities),
+            'pages_loaded': 0,
+            'page_size': page_size,
+            'fetch_all': fetch_all,
+            'truncated': False,
+            'next_page_token': None,
+            'cache': {
+                'mode': 'local',
+                'path': str(cache_path),
+                'updated_at': cache_payload.get('updated_at'),
+            },
+            'filters': {
+                'activity_types': params['activity_types'],
+                'direction': params['direction'],
+                'symbol': symbol_filter,
+            }
         })
+
+    while True:
+        payload, error = _alpaca_get('/v2/account/activities', params=params)
+        if error:
+            cached_activities = _filter_cached_activities(cache_payload.get('activities', []), params, symbol_filter=symbol_filter)
+            if cached_activities:
+                return jsonify({
+                    'activities': cached_activities,
+                    'count': len(cached_activities),
+                    'pages_loaded': pages_loaded,
+                    'page_size': page_size,
+                    'fetch_all': fetch_all,
+                    'truncated': False,
+                    'next_page_token': None,
+                    'cache': {
+                        'mode': 'local-fallback',
+                        'path': str(cache_path),
+                        'updated_at': cache_payload.get('updated_at'),
+                        'remote_error': error[0],
+                    },
+                    'filters': {
+                        'activity_types': params['activity_types'],
+                        'direction': params['direction'],
+                        'symbol': symbol_filter,
+                    }
+                })
+            return jsonify({'error': error[0]}), error[1]
+
+        page_items = payload if isinstance(payload, list) else []
+        pages_loaded += 1
+
+        for activity in page_items:
+            symbol = activity.get('symbol')
+            if symbol_filter and symbol != symbol_filter:
+                continue
+
+            qty = activity.get('qty')
+            price = activity.get('price')
+            side = activity.get('side')
+            transaction_time = _iso_or_none(activity.get('transaction_time'))
+
+            activities.append({
+                'id': activity.get('id'),
+                'activity_type': activity.get('activity_type'),
+                'symbol': symbol,
+                'side': side,
+                'qty': float(qty) if qty is not None else None,
+                'price': float(price) if price is not None else None,
+                'notional': float(activity.get('net_amount')) if activity.get('net_amount') is not None else None,
+                'timestamp': transaction_time,
+                'order_id': activity.get('order_id'),
+                'raw': activity,
+            })
+
+        if not fetch_all or len(page_items) < page_size:
+            next_page_token = None
+            break
+
+        if pages_loaded >= max_pages:
+            next_page_token = page_items[-1].get('id') if page_items else None
+            truncated = bool(next_page_token)
+            break
+
+        next_page_token = page_items[-1].get('id') if page_items else None
+        if not next_page_token:
+            break
+        params['page_token'] = next_page_token
+
+    merged_cache = _upsert_activities_cache(activities)
 
     return jsonify({
         'activities': activities,
         'count': len(activities),
+        'pages_loaded': pages_loaded,
+        'page_size': page_size,
+        'fetch_all': fetch_all,
+        'truncated': truncated,
+        'next_page_token': next_page_token if truncated else None,
+        'cache': {
+            'mode': 'remote+cached',
+            'path': str(cache_path),
+            'updated_at': merged_cache.get('updated_at'),
+            'stored_activities': len(merged_cache.get('activities', [])),
+        },
         'filters': {
             'activity_types': params['activity_types'],
             'direction': params['direction'],

@@ -45,6 +45,8 @@ def main():
 def stato_chiamate():
     # Restituisce l'elenco delle chiamate attive e il loro stato
     try:
+        if srv.repo.available():
+            return jsonify(srv.repo.fetch_runs(include_deleted=False, limit=500))
         return jsonify(list(srv.runs.values()))
     except Exception as e:
         logger.exception(srv.runs)
@@ -55,6 +57,8 @@ def clear():
     srv.runs = {}
     srv.load_data()
     # Restituisce l'elenco delle chiamate attive e il loro stato
+    if srv.repo.available():
+        return jsonify(srv.repo.fetch_runs(include_deleted=False, limit=500))
     return jsonify(list(srv.runs.values()))
 
 @mn.route('/schedule', methods=['POST'])
@@ -113,8 +117,15 @@ def pin_switch():
 
     logger.debug(f"{source_path}-- {destination_path}")
     # Move the folder using shutil.move()
-    shutil.move(source_path, destination_path)
+    if os.path.exists(source_path):
+        os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+        shutil.move(source_path, destination_path)
     r["pinned"] = not r["pinned"]
+    if srv.repo.available():
+        try:
+            srv.repo.set_pinned(id, r["pinned"])
+        except Exception:
+            logger.exception("Errore nel pinning run %s", id)
     event_emitter.emit(EventEmitter.EV_UPDATED_RUNS,r)
     return jsonify({'message': 'Data updated successfully'})
 
@@ -122,12 +133,24 @@ def pin_switch():
 def delete():
     id = request.get_json().get('id')
     if id not in srv.runs:
+        if srv.repo.available():
+            try:
+                srv.repo.soft_delete_run(id)
+                return jsonify({'message': 'Data successfully deleted'})
+            except Exception:
+                logger.exception("Errore nel soft delete run %s", id)
         return jsonify({'message': 'Data missing '}),500        
     r = srv.runs[id]
     del srv.runs[id]
     if r["pinned"]:
         path = os.path.join(DATA_PATH,f"{id}.json")
-        os.remove(path)
+        if os.path.exists(path):
+            os.remove(path)
+    if srv.repo.available():
+        try:
+            srv.repo.soft_delete_run(id)
+        except Exception:
+            logger.exception("Errore nel soft delete run %s", id)
 
 
     event_emitter.emit(EventEmitter.EV_UPDATED_RUNS,request.get_json())

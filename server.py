@@ -10,6 +10,7 @@ from app.scheduler import sc_bp
 from app.fileserver import fs_bp
 from app.live import al_bp
 from app.main import mn
+from app.watchtower import obs_bp
 
 import os
 import sys
@@ -98,12 +99,15 @@ app.register_blueprint(al_bp, url_prefix=f'{url_prefix}/al')
 # Registra il Blueprint dello scheduler
 app.register_blueprint(sc_bp, url_prefix=f'{url_prefix}/sc')
 
+# Watchtower / watchdog
+app.register_blueprint(obs_bp, url_prefix=f'{url_prefix}/obs')
+
 @app.route('/')
 def home():
     return "Ciao, mondo!"
 
 if __name__ == '__main__':
-    port = int(os.getenv('SERVER_PORT', '5000'))
+    port = int(os.getenv('SERVER_PORT', '9090'))
     app.run(port=port, debug=True, use_reloader=True)
 
 # GitHub webhook configuration - load from environment

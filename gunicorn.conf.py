@@ -1,6 +1,6 @@
 import os
 
-bind = os.getenv('GUNICORN_BIND', f"0.0.0.0:{os.getenv('SERVER_PORT', '5000')}")
+bind = os.getenv('GUNICORN_BIND', f"0.0.0.0:{os.getenv('SERVER_PORT', '9090')}")
 workers = int(os.getenv('GUNICORN_WORKERS', '2'))
 threads = int(os.getenv('GUNICORN_THREADS', '4'))
 timeout = int(os.getenv('GUNICORN_TIMEOUT', '60'))
