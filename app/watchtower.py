@@ -4,8 +4,9 @@ import subprocess
 import threading
 import time
 import uuid
+from datetime import date
 from pathlib import Path
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 
 from app.scheduler import scheduler
 from app.service.main_service import repo
@@ -101,6 +102,43 @@ def _watchtower_window_args():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), None, None
     return None, window.get("opened_at"), window.get("closed_at")
+
+
+def _watchtower_context_args():
+    return (
+        str(request.args.get("portfolio_key_id") or "").strip() or None,
+        str(request.args.get("chain_run_id") or "").strip() or None,
+    )
+
+
+def _feed_monitor_dates_from_request(payload=None):
+    source = payload if isinstance(payload, dict) else request.args
+    start_raw = str(source.get("start_date") or source.get("date") or "").strip()
+    end_raw = str(source.get("end_date") or start_raw or "").strip()
+    if not start_raw:
+        raise ValueError("start_date is required")
+    try:
+        start_date = date.fromisoformat(start_raw)
+        end_date = date.fromisoformat(end_raw)
+    except ValueError as exc:
+        raise ValueError("invalid_date_range") from exc
+    if end_date < start_date:
+        raise ValueError("end_date must be >= start_date")
+    return start_date, end_date
+
+
+def _feed_monitor_symbols_from_payload(payload):
+    raw = payload.get("symbols")
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ValueError("symbols must be a list")
+    values = []
+    for item in raw:
+        symbol = str(item or "").strip().upper()
+        if symbol and symbol not in values:
+            values.append(symbol)
+    return values
 
 
 def _alpaca_sync_job_snapshot(job_id):
@@ -290,8 +328,13 @@ def _start_baseline_job(payload):
     return _baseline_job_snapshot(job_id)
 
 
-def _start_alpaca_sync_job(window_open, window_start, window_end):
-    estimate = repo.estimate_alpaca_sync_total(window_start=window_start, window_end=window_end)
+def _start_alpaca_sync_job(window_open, window_start, window_end, portfolio_key_id=None, chain_run_id=None):
+    estimate = repo.estimate_alpaca_sync_total(
+        window_start=window_start,
+        window_end=window_end,
+        portfolio_key_id=portfolio_key_id,
+        chain_run_id=chain_run_id,
+    )
     estimated_total = int(estimate.get("estimated_total", 0) or 0)
     job_id = uuid.uuid4().hex
     with _alpaca_sync_jobs_lock:
@@ -306,6 +349,7 @@ def _start_alpaca_sync_job(window_open, window_start, window_end):
             "updated_at": time.time(),
             "run_id": estimate.get("run_id"),
             "observed_mode": estimate.get("observed_mode"),
+            "portfolio_key_id": estimate.get("portfolio_key_id") or portfolio_key_id,
             "error": None,
             "done": False,
         }
@@ -332,6 +376,7 @@ def _start_alpaca_sync_job(window_open, window_start, window_end):
             result = repo._sync_alpaca_order_cache(
                 window_start=window_start,
                 window_end=window_end,
+                portfolio_key_id=portfolio_key_id,
                 force=True,
                 progress_callback=_progress,
                 estimated_total=estimated_total,
@@ -359,6 +404,126 @@ def _start_alpaca_sync_job(window_open, window_start, window_end):
     thread = threading.Thread(target=_runner, name=f"alpaca-sync-{job_id[:8]}", daemon=True)
     thread.start()
     return _alpaca_sync_job_snapshot(job_id)
+
+
+def _start_feed_monitor_sync_job(start_date, end_date, symbols=None):
+    coverage = repo.scan_feed_monitor_coverage(start_date, end_date, symbols=symbols)
+    requested_symbols = coverage.get("missing_historical_symbols") or []
+    if symbols:
+        wanted = {str(item).strip().upper() for item in symbols if str(item).strip()}
+        requested_symbols = [item for item in requested_symbols if item in wanted]
+    job_id = uuid.uuid4().hex
+    snapshot = repo.create_feed_monitor_job(
+        job_id=job_id,
+        job_type="feed_monitor_sync",
+        start_date=start_date,
+        end_date=end_date,
+        total_symbols=len(requested_symbols),
+        filters={"symbols": requested_symbols},
+    )
+
+    def _runner():
+        repo.update_feed_monitor_job(job_id, status="running")
+
+        def _progress(payload):
+            total = int(payload.get("total_symbols", len(requested_symbols)) or 0)
+            completed = int(payload.get("completed_symbols", 0) or 0)
+            progress = float(payload.get("progress", 0) or 0)
+            repo.update_feed_monitor_job(
+                job_id,
+                total_symbols=total,
+                completed_symbols=completed,
+                current_symbol=payload.get("current_symbol"),
+                progress=progress,
+            )
+
+        try:
+            result = repo.sync_feed_monitor_historical(
+                start_date=start_date,
+                end_date=end_date,
+                symbols=symbols,
+                progress_callback=_progress,
+            )
+            repo.update_feed_monitor_job(
+                job_id,
+                status="completed",
+                total_symbols=len(requested_symbols),
+                completed_symbols=len(requested_symbols),
+                current_symbol=None,
+                progress=1.0,
+                result=result,
+                done=True,
+            )
+        except Exception as exc:
+            repo.update_feed_monitor_job(
+                job_id,
+                status="failed",
+                error=str(exc),
+                done=True,
+            )
+
+    thread = threading.Thread(target=_runner, name=f"feed-sync-{job_id[:8]}", daemon=True)
+    thread.start()
+    return snapshot
+
+
+def _start_feed_monitor_match_job(start_date, end_date, symbols=None, force=False):
+    coverage = repo.scan_feed_monitor_coverage(start_date, end_date, symbols=symbols)
+    symbol_days = [row for row in coverage.get("symbol_days", []) if row.get("historical_status") == "available"]
+    job_id = uuid.uuid4().hex
+    snapshot = repo.create_feed_monitor_job(
+        job_id=job_id,
+        job_type="feed_monitor_match",
+        start_date=start_date,
+        end_date=end_date,
+        total_symbols=len(symbol_days),
+        filters={"symbols": symbols or [], "force": bool(force)},
+    )
+
+    def _runner():
+        repo.update_feed_monitor_job(job_id, status="running")
+
+        def _progress(payload):
+            total = int(payload.get("total_symbols", len(symbol_days)) or 0)
+            completed = int(payload.get("completed_symbols", 0) or 0)
+            progress = float(payload.get("progress", 0) or 0)
+            repo.update_feed_monitor_job(
+                job_id,
+                total_symbols=total,
+                completed_symbols=completed,
+                current_symbol=payload.get("current_symbol"),
+                progress=progress,
+            )
+
+        try:
+            result = repo.compute_feed_monitor_matches(
+                start_date=start_date,
+                end_date=end_date,
+                symbols=symbols,
+                progress_callback=_progress,
+                force=bool(force),
+            )
+            repo.update_feed_monitor_job(
+                job_id,
+                status="completed",
+                total_symbols=len(symbol_days),
+                completed_symbols=len(symbol_days),
+                current_symbol=None,
+                progress=1.0,
+                result=result,
+                done=True,
+            )
+        except Exception as exc:
+            repo.update_feed_monitor_job(
+                job_id,
+                status="failed",
+                error=str(exc),
+                done=True,
+            )
+
+    thread = threading.Thread(target=_runner, name=f"feed-match-{job_id[:8]}", daemon=True)
+    thread.start()
+    return snapshot
 
 
 def _systemctl(*args):
@@ -469,8 +634,15 @@ def watchtower_reports():
     invalid, window_start, window_end = _watchtower_window_args()
     if invalid:
         return invalid, 400
+    portfolio_key_id, chain_run_id = _watchtower_context_args()
     limit = int(request.args.get("limit", "50"))
-    return jsonify(repo.latest_watchtower_reports(limit=limit, window_start=window_start, window_end=window_end))
+    return jsonify(repo.latest_watchtower_reports(
+        limit=limit,
+        window_start=window_start,
+        window_end=window_end,
+        portfolio_key_id=portfolio_key_id,
+        chain_run_id=chain_run_id,
+    ))
 
 
 @obs_bp.route("/watchtower/windows", methods=["GET"])
@@ -480,6 +652,37 @@ def watchtower_windows():
         return missing
     limit = int(request.args.get("limit", "30"))
     return jsonify(repo.list_watchtower_windows(limit=limit))
+
+
+@obs_bp.route("/watchtower/portfolio-contexts", methods=["GET"])
+def watchtower_portfolio_contexts():
+    missing = _require_repo()
+    if missing:
+        return missing
+    invalid, window_start, window_end = _watchtower_window_args()
+    if invalid:
+        return invalid, 400
+    return jsonify(repo.list_portfolio_contexts(window_start=window_start, window_end=window_end))
+
+
+@obs_bp.route("/watchtower/portfolio-session", methods=["GET"])
+def watchtower_portfolio_session():
+    missing = _require_repo()
+    if missing:
+        return missing
+    invalid, window_start, window_end = _watchtower_window_args()
+    if invalid:
+        return invalid, 400
+    portfolio_key_id, chain_run_id = _watchtower_context_args()
+    if not portfolio_key_id:
+        return jsonify({"error": "portfolio_key_id is required"}), 400
+    payload = repo.portfolio_window_session(
+        window_start=window_start,
+        window_end=window_end,
+        portfolio_key_id=portfolio_key_id,
+        chain_run_id=chain_run_id,
+    )
+    return jsonify(payload or {"window_open": None, "portfolio_key_id": portfolio_key_id, "chain_run_ids": []})
 
 
 @obs_bp.route("/watchtower/current-window", methods=["GET"])
@@ -539,7 +742,9 @@ def watchtower_alpaca_sync():
         window = repo._resolve_watchtower_window(window_open)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    job = _start_alpaca_sync_job(window_open, window.get("opened_at"), window.get("closed_at"))
+    portfolio_key_id = str(payload.get("portfolio_key_id") or "").strip() or None
+    chain_run_id = str(payload.get("chain_run_id") or "").strip() or None
+    job = _start_alpaca_sync_job(window_open, window.get("opened_at"), window.get("closed_at"), portfolio_key_id=portfolio_key_id, chain_run_id=chain_run_id)
     return jsonify(job), 202
 
 
@@ -551,6 +756,173 @@ def watchtower_alpaca_sync_status(job_id):
     return jsonify(job)
 
 
+@obs_bp.route("/watchtower/feed-monitoring/meta", methods=["GET"])
+def watchtower_feed_monitor_meta():
+    missing = _require_repo()
+    if missing:
+        return missing
+    limit = int(request.args.get("limit", "90"))
+    return jsonify(repo.feed_monitor_metadata(limit=limit))
+
+
+@obs_bp.route("/watchtower/feed-monitoring/coverage", methods=["GET"])
+def watchtower_feed_monitor_coverage():
+    missing = _require_repo()
+    if missing:
+        return missing
+    try:
+        start_date, end_date = _feed_monitor_dates_from_request()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    symbols = request.args.getlist("symbol")
+    if not symbols:
+        raw_symbols = str(request.args.get("symbols") or "").strip()
+        if raw_symbols:
+            symbols = [item.strip().upper() for item in raw_symbols.split(",") if item.strip()]
+    payload = repo.scan_feed_monitor_coverage(start_date, end_date, symbols=symbols or None)
+    return jsonify(payload)
+
+
+@obs_bp.route("/watchtower/feed-monitoring/sync", methods=["POST"])
+def watchtower_feed_monitor_sync():
+    missing = _require_repo()
+    if missing:
+        return missing
+    payload = request.get_json(silent=True) or {}
+    try:
+        start_date, end_date = _feed_monitor_dates_from_request(payload)
+        symbols = _feed_monitor_symbols_from_payload(payload)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    job = _start_feed_monitor_sync_job(start_date, end_date, symbols=symbols)
+    return jsonify(job), 202
+
+
+@obs_bp.route("/watchtower/feed-monitoring/sync/<job_id>", methods=["GET"])
+def watchtower_feed_monitor_sync_status(job_id):
+    missing = _require_repo()
+    if missing:
+        return missing
+    payload = repo.feed_monitor_job(job_id)
+    if not payload or payload.get("job_type") != "feed_monitor_sync":
+        return jsonify({"error": "job_not_found"}), 404
+    return jsonify(payload)
+
+
+@obs_bp.route("/watchtower/feed-monitoring/match", methods=["POST"])
+def watchtower_feed_monitor_match():
+    missing = _require_repo()
+    if missing:
+        return missing
+    payload = request.get_json(silent=True) or {}
+    try:
+        start_date, end_date = _feed_monitor_dates_from_request(payload)
+        symbols = _feed_monitor_symbols_from_payload(payload)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    force = bool(payload.get("force", False))
+    job = _start_feed_monitor_match_job(start_date, end_date, symbols=symbols, force=force)
+    return jsonify(job), 202
+
+
+@obs_bp.route("/watchtower/feed-monitoring/match/<job_id>", methods=["GET"])
+def watchtower_feed_monitor_match_status(job_id):
+    missing = _require_repo()
+    if missing:
+        return missing
+    payload = repo.feed_monitor_job(job_id)
+    if not payload or payload.get("job_type") != "feed_monitor_match":
+        return jsonify({"error": "job_not_found"}), 404
+    return jsonify(payload)
+
+
+@obs_bp.route("/watchtower/feed-monitoring/summary", methods=["GET"])
+def watchtower_feed_monitor_summary():
+    missing = _require_repo()
+    if missing:
+        return missing
+    try:
+        start_date, end_date = _feed_monitor_dates_from_request()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    symbol = str(request.args.get("symbol") or "").strip().upper() or None
+    return jsonify(repo.feed_monitor_summaries(start_date, end_date, symbol=symbol))
+
+
+@obs_bp.route("/watchtower/feed-monitoring/field-pivot", methods=["GET"])
+def watchtower_feed_monitor_field_pivot():
+    missing = _require_repo()
+    if missing:
+        return missing
+    try:
+        start_date, end_date = _feed_monitor_dates_from_request()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    symbol = str(request.args.get("symbol") or "").strip().upper() or None
+    return jsonify(repo.feed_monitor_field_mismatch_pivot(start_date, end_date, symbol=symbol))
+
+
+@obs_bp.route("/watchtower/feed-monitoring/discrepancies", methods=["GET"])
+def watchtower_feed_monitor_discrepancies():
+    missing = _require_repo()
+    if missing:
+        return missing
+    try:
+        start_date, end_date = _feed_monitor_dates_from_request()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    symbol = str(request.args.get("symbol") or "").strip().upper() or None
+    discrepancy_type = str(request.args.get("discrepancy_type") or "").strip() or None
+    limit = int(request.args.get("limit", "500"))
+    offset = int(request.args.get("offset", "0"))
+    payload = repo.feed_monitor_discrepancies(
+        start_date,
+        end_date,
+        symbol=symbol,
+        discrepancy_type=discrepancy_type,
+        limit=limit,
+        offset=offset,
+    )
+    rows = payload.get("rows") or []
+    counts_by_type = {
+        "missing_live": 0,
+        "missing_historical": 0,
+        "field_mismatch": 0,
+    }
+    for row in rows:
+        key = row.get("discrepancy_type")
+        if key in counts_by_type:
+            counts_by_type[key] += 1
+    payload["counts_by_type"] = counts_by_type
+    payload["page_count"] = len(rows)
+    return jsonify(payload)
+
+
+@obs_bp.route("/watchtower/feed-monitoring/export", methods=["GET"])
+def watchtower_feed_monitor_export():
+    missing = _require_repo()
+    if missing:
+        return missing
+    try:
+        start_date, end_date = _feed_monitor_dates_from_request()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    symbol = str(request.args.get("symbol") or "").strip().upper() or None
+    discrepancy_type = str(request.args.get("discrepancy_type") or "").strip() or None
+    content = repo.feed_monitor_discrepancies_csv(
+        start_date=start_date,
+        end_date=end_date,
+        symbol=symbol,
+        discrepancy_type=discrepancy_type,
+    )
+    filename = f"feed-monitor-{start_date.isoformat()}-{end_date.isoformat()}.csv"
+    return Response(
+        content,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
 @obs_bp.route("/watchtower/overview", methods=["GET"])
 def watchtower_overview():
     missing = _require_repo()
@@ -559,8 +931,15 @@ def watchtower_overview():
     invalid, window_start, window_end = _watchtower_window_args()
     if invalid:
         return invalid, 400
+    portfolio_key_id, chain_run_id = _watchtower_context_args()
     limit = int(request.args.get("limit", "20"))
-    return jsonify(repo.watchtower_integrity_overview(limit=limit, window_start=window_start, window_end=window_end))
+    return jsonify(repo.watchtower_integrity_overview(
+        limit=limit,
+        window_start=window_start,
+        window_end=window_end,
+        portfolio_key_id=portfolio_key_id,
+        chain_run_id=chain_run_id,
+    ))
 
 
 @obs_bp.route("/watchtower/order-matching", methods=["GET"])
@@ -581,6 +960,38 @@ def watchtower_order_matching():
     ))
 
 
+@obs_bp.route("/watchtower/export-bars", methods=["GET"])
+def watchtower_export_bars():
+    missing = _require_repo()
+    if missing:
+        return missing
+    invalid, window_start, window_end = _watchtower_window_args()
+    if invalid:
+        return invalid, 400
+    portfolio_key_id, chain_run_id = _watchtower_context_args()
+    symbols = request.args.getlist("symbol")
+    if not symbols:
+        raw_symbols = str(request.args.get("symbols") or "").strip()
+        if raw_symbols:
+            symbols = [item.strip().upper() for item in raw_symbols.split(",") if item.strip()]
+    try:
+        content = repo.export_watchtower_bars_xlsx(
+            window_start=window_start,
+            window_end=window_end,
+            portfolio_key_id=portfolio_key_id,
+            chain_run_id=chain_run_id,
+            symbols=symbols or None,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    filename = f"watchtower-bars-{window_start.strftime('%Y%m%dT%H%M%S')}-{window_end.strftime('%Y%m%dT%H%M%S')}.xlsx"
+    return Response(
+        content,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
 @obs_bp.route("/watchtower/factsheet", methods=["GET"])
 def watchtower_factsheet():
     missing = _require_repo()
@@ -589,7 +1000,13 @@ def watchtower_factsheet():
     invalid, window_start, window_end = _watchtower_window_args()
     if invalid:
         return invalid, 400
-    return jsonify(repo.watchtower_sampling_factsheet(window_start=window_start, window_end=window_end))
+    portfolio_key_id, chain_run_id = _watchtower_context_args()
+    return jsonify(repo.watchtower_sampling_factsheet(
+        window_start=window_start,
+        window_end=window_end,
+        portfolio_key_id=portfolio_key_id,
+        chain_run_id=chain_run_id,
+    ))
 
 
 @obs_bp.route("/watchtower/coherence-summary", methods=["GET"])
@@ -600,7 +1017,13 @@ def watchtower_coherence_summary():
     invalid, window_start, window_end = _watchtower_window_args()
     if invalid:
         return invalid, 400
-    return jsonify(repo.watchtower_coherence_summary(window_start=window_start, window_end=window_end))
+    portfolio_key_id, chain_run_id = _watchtower_context_args()
+    return jsonify(repo.watchtower_coherence_summary(
+        window_start=window_start,
+        window_end=window_end,
+        portfolio_key_id=portfolio_key_id,
+        chain_run_id=chain_run_id,
+    ))
 
 
 @obs_bp.route("/watchdog", methods=["GET"])

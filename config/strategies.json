@@ -254,6 +254,10 @@
     {
         "label": "RMAStrategy",
         "value": "weekly.RMAStrategy"
+    },
+    {
+        "label": "DailyRMAStrategy",
+        "value": "daily.DailyRMAStrategy"
     },{
         "label": "EnhancedRMAStrategy",
         "value": "weekly.EnhancedRMAStrategy"

@@ -22,9 +22,34 @@ from flask import request
 from app.main import mn
 import logging
 import warnings
+import re
 from urllib3.exceptions import InsecureRequestWarning
 
 warnings.filterwarnings("ignore", category=InsecureRequestWarning)
+
+
+def env_flag(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def parse_allowed_origins(value):
+    if not value:
+        return []
+    return [origin.strip() for origin in value.split(',') if origin.strip()]
+
+
+def build_cors_origins(origins):
+    cors_origins = []
+    for origin in origins:
+        if origin.endswith(':*'):
+            base = re.escape(origin[:-2])
+            cors_origins.append(re.compile(rf"^{base}(?::\d+)?$"))
+        else:
+            cors_origins.append(origin)
+    return cors_origins
 
 # Leggi il livello di logging dalla variabile di ambiente, default a 'INFO'
 log_level = os.getenv('LOG_LEVEL', 'DEBUG').upper()
@@ -50,9 +75,17 @@ logging.error(f"{log_level} : {os.getenv('LOG_LEVEL')}")
 #sys.path.append('../')  # Aggiusta il percorso in base alla tua struttura di cartelle
 
 app = Flask(__name__)
-CORS(app)  # Abilita CORS per tutto il tuo applicativo Flask
-
 logger = logging.getLogger(__name__)
+
+# CORS Configuration - Environment-based for dev/prod flexibility
+allowed_origins = os.getenv('ALLOWED_ORIGINS', '*')
+if allowed_origins == '*':
+    logger.warning("CORS configured for ALL origins (*) - only use in development!")
+    CORS(app)
+else:
+    origins_list = parse_allowed_origins(allowed_origins)
+    logger.info(f"CORS restricted to origins: {origins_list}")
+    CORS(app, origins=build_cors_origins(origins_list), supports_credentials=True)
 
 # Configura il livello di logging per matplotlib
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
@@ -102,8 +135,11 @@ def home():
 
 
 if __name__ == '__main__':
+    host = os.getenv('SERVER_HOST', '127.0.0.1')
     port = int(os.getenv('SERVER_PORT', '9090'))
-    app.run(port=port, debug=True, use_reloader=True)
+    debug = env_flag('APP_DEBUG', True)
+    reload_enabled = env_flag('APP_RELOAD', debug)
+    app.run(host=host, port=port, debug=debug, use_reloader=reload_enabled)
 
 
 GITHUB_SECRET = b'ssQroXoUKHRspjsONB9bQiyHmjK6nrh1'  # Sostituisci con il secret configurato nel webhook GitHub

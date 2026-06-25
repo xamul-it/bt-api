@@ -19,9 +19,34 @@ import hmac
 import hashlib
 import logging
 import warnings
+import re
 from urllib3.exceptions import InsecureRequestWarning
 
 warnings.filterwarnings("ignore", category=InsecureRequestWarning)
+
+
+def env_flag(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def parse_allowed_origins(value):
+    if not value:
+        return []
+    return [origin.strip() for origin in value.split(',') if origin.strip()]
+
+
+def build_cors_origins(origins):
+    cors_origins = []
+    for origin in origins:
+        if origin.endswith(':*'):
+            base = re.escape(origin[:-2])
+            cors_origins.append(re.compile(rf"^{base}(?::\d+)?$"))
+        else:
+            cors_origins.append(origin)
+    return cors_origins
 
 # Leggi il livello di logging dalla variabile di ambiente, default a 'INFO'
 log_level = os.getenv('LOG_LEVEL', 'DEBUG').upper()
@@ -57,9 +82,9 @@ if allowed_origins == '*':
     CORS(app)
 else:
     # Production: restrict to specific origins
-    origins_list = [origin.strip() for origin in allowed_origins.split(',')]
+    origins_list = parse_allowed_origins(allowed_origins)
     logger.info(f"CORS restricted to origins: {origins_list}")
-    CORS(app, origins=origins_list, supports_credentials=True)
+    CORS(app, origins=build_cors_origins(origins_list), supports_credentials=True)
 
 # Configura il livello di logging per matplotlib
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
@@ -107,8 +132,11 @@ def home():
     return "Ciao, mondo!"
 
 if __name__ == '__main__':
+    host = os.getenv('SERVER_HOST', '127.0.0.1')
     port = int(os.getenv('SERVER_PORT', '9090'))
-    app.run(port=port, debug=True, use_reloader=True)
+    debug = env_flag('APP_DEBUG', True)
+    reload_enabled = env_flag('APP_RELOAD', debug)
+    app.run(host=host, port=port, debug=debug, use_reloader=reload_enabled)
 
 # GitHub webhook configuration - load from environment
 GITHUB_SECRET = os.environ.get('GITHUB_WEBHOOK_SECRET')
