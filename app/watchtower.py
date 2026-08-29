@@ -10,6 +10,8 @@ from flask import Blueprint, Response, jsonify, request
 
 from app.scheduler import scheduler
 from app.service.main_service import repo
+from watchtower_runtime import ProfileParamsUnresolvedError, ProfileParamsIntegrityError
+import profile_baseline as _pbl
 
 
 obs_bp = Blueprint("watchtower", __name__)
@@ -17,6 +19,8 @@ _alpaca_sync_jobs = {}
 _alpaca_sync_jobs_lock = threading.Lock()
 _baseline_jobs = {}
 _baseline_jobs_lock = threading.Lock()
+_profile_baseline_jobs = {}
+_profile_baseline_jobs_lock = threading.Lock()
 
 
 DEFAULT_SYSTEMD_SERVICES = [
@@ -326,6 +330,64 @@ def _start_baseline_job(payload):
     thread = threading.Thread(target=_runner, name=f"baseline-{job_id[:8]}", daemon=True)
     thread.start()
     return _baseline_job_snapshot(job_id)
+
+
+def _pbl_job_snapshot(job_id):
+    with _profile_baseline_jobs_lock:
+        job = _profile_baseline_jobs.get(job_id)
+        return dict(job) if job else None
+
+
+def _pbl_job_update(job_id, **updates):
+    with _profile_baseline_jobs_lock:
+        job = _profile_baseline_jobs.get(job_id)
+        if job:
+            job.update(updates)
+            job["updated_at"] = time.time()
+
+
+def _start_profile_baseline_job(profile, payload):
+    def _parse_date(key, required=True):
+        raw = str(payload.get(key) or "").strip()
+        if not raw:
+            if required:
+                raise ValueError(f"{key} is required")
+            return None
+        try:
+            return date.fromisoformat(raw)
+        except ValueError:
+            raise ValueError(f"{key} must be YYYY-MM-DD")
+
+    label = str(payload.get("label") or "").strip()
+    if not label:
+        raise ValueError("label is required")
+    window_start = _parse_date("window_start")
+    window_end = _parse_date("window_end")
+    as_of_date = _parse_date("as_of_date", required=False)
+    if window_end < window_start:
+        raise ValueError("window_end must be on or after window_start")
+
+    job_id = uuid.uuid4().hex
+    with _profile_baseline_jobs_lock:
+        _profile_baseline_jobs[job_id] = {
+            "job_id": job_id, "status": "queued", "done": False,
+            "profile": profile, "label": label, "baseline_id": None,
+            "created_at": time.time(), "updated_at": time.time(), "error": None,
+        }
+
+    def _runner():
+        _pbl_job_update(job_id, status="running")
+        try:
+            row = _pbl.compute_profile_baseline(
+                repo, profile=profile, label=label,
+                window_start=window_start, window_end=window_end, as_of_date=as_of_date,
+            )
+            _pbl_job_update(job_id, status="completed", done=True, baseline_id=row.get("id"))
+        except Exception as exc:  # noqa: BLE001
+            _pbl_job_update(job_id, status="failed", done=True, error=str(exc))
+
+    threading.Thread(target=_runner, name=f"pbl-{job_id[:8]}", daemon=True).start()
+    return _pbl_job_snapshot(job_id)
 
 
 def _start_alpaca_sync_job(window_open, window_start, window_end, portfolio_key_id=None, chain_run_id=None):
@@ -1080,6 +1142,186 @@ def watchtower_baseline_job_status(job_id):
     if not job:
         return jsonify({"error": "job_not_found"}), 404
     return jsonify(job)
+
+
+# ---------------------------------------------------------------------
+# Cron profile monitoring (watchtower_cron_monitoring_brief.md, D/A/C/B):
+# scheduled overnight_ah*-style profiles that run on a daily bar via cron,
+# not a live feed. Every route below discovers `profile` from the DB
+# (repo.list_known_profiles() / repo.profile_cockpit()) -- never a
+# hardcoded list -- so a brand new profile appears automatically the first
+# time it has any data in profile_param_versions /
+# execution_reconciliation_results / strategy_footprints / alpaca_portfolios.
+# ---------------------------------------------------------------------
+
+@obs_bp.route("/watchtower/cron/profiles", methods=["GET"])
+def watchtower_cron_profiles():
+    missing = _require_repo()
+    if missing:
+        return missing
+    profiles = repo.list_known_profiles()
+    registry = {row["assigned_profile"]: row for row in repo.list_assigned_portfolios()}
+    summary = []
+    for profile in profiles:
+        timeline = repo.list_profile_param_versions(profile)
+        current = timeline[-1] if timeline else None
+        pending = repo.list_pending_reconciliation(profile)
+        reg = registry.get(profile)
+        open_alerts = repo.list_open_guardrail_alerts(reg["portfolio_key_id"]) if reg else []
+        summary.append({
+            "profile": profile,
+            "strategy": current.get("strategy") if current else None,
+            "activation_date": timeline[0]["effective_from_date"] if timeline else None,
+            "current_since": current.get("effective_from_date") if current else None,
+            "pending_reconciliation_count": len(pending),
+            "registered": reg is not None,
+            "open_guardrail_alert_count": len(open_alerts),
+        })
+    return jsonify(summary)
+
+
+@obs_bp.route("/watchtower/cron/<profile>/overview", methods=["GET"])
+def watchtower_cron_overview(profile):
+    missing = _require_repo()
+    if missing:
+        return missing
+    return jsonify(repo.profile_cockpit(profile))
+
+
+# ---------------------------------------------------------------------
+# Baseline Manager (docs/superpowers/specs/2026-08-29-baseline-manager-design.md).
+# On-demand named baselines per cron profile: a long backtest window,
+# persisted to profile_baselines, used as the reference for a recent-window
+# stability/regime check. `profile` is free text (cardinal constraint) --
+# an unknown profile returns [] / 404, never an error.
+# ---------------------------------------------------------------------
+
+@obs_bp.route("/watchtower/cron/<profile>/baselines", methods=["GET"])
+def watchtower_cron_baselines(profile):
+    missing = _require_repo()
+    if missing:
+        return missing
+    return jsonify(repo.list_profile_baselines(profile))
+
+
+@obs_bp.route("/watchtower/cron/<profile>/baselines", methods=["POST"])
+def watchtower_cron_baseline_create(profile):
+    missing = _require_repo()
+    if missing:
+        return missing
+    payload = request.get_json(silent=True) or {}
+    try:
+        job = _start_profile_baseline_job(profile, payload)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(job), 202
+
+
+@obs_bp.route("/watchtower/cron/baselines/jobs/<job_id>", methods=["GET"])
+def watchtower_cron_baseline_job(job_id):
+    job = _pbl_job_snapshot(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    return jsonify(job)
+
+
+@obs_bp.route("/watchtower/cron/<profile>/baselines/<int:baseline_id>", methods=["DELETE"])
+def watchtower_cron_baseline_delete(profile, baseline_id):
+    missing = _require_repo()
+    if missing:
+        return missing
+    existing = repo.get_profile_baseline(baseline_id)
+    if not existing or existing.get("profile") != profile:
+        return jsonify({"error": "baseline not found"}), 404
+    return jsonify({"deleted": repo.delete_profile_baseline(baseline_id)})
+
+
+@obs_bp.route("/watchtower/cron/<profile>/baselines/<int:baseline_id>/drift", methods=["GET"])
+def watchtower_cron_baseline_drift(profile, baseline_id):
+    missing = _require_repo()
+    if missing:
+        return missing
+    baseline = repo.get_profile_baseline(baseline_id)
+    if not baseline or baseline.get("profile") != profile:
+        return jsonify({"error": "baseline not found"}), 404
+    window = _pbl._clamp_window(request.args.get("recent_window_days", _pbl.RECENT_WINDOW_DEFAULT))
+    try:
+        verdict = _pbl.compute_baseline_drift(repo, baseline, recent_window_days=window)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 500
+    return jsonify(verdict)
+
+
+@obs_bp.route("/watchtower/cron/<profile>/timeline", methods=["GET"])
+def watchtower_cron_timeline(profile):
+    missing = _require_repo()
+    if missing:
+        return missing
+    return jsonify(repo.list_profile_param_versions(profile))
+
+
+@obs_bp.route("/watchtower/cron/<profile>/timeline/as-of", methods=["GET"])
+def watchtower_cron_timeline_as_of(profile):
+    missing = _require_repo()
+    if missing:
+        return missing
+    trading_date_raw = request.args.get("trading_date", "").strip()
+    if not trading_date_raw:
+        return jsonify({"error": "trading_date is required (YYYY-MM-DD)"}), 400
+    try:
+        trading_date = date.fromisoformat(trading_date_raw)
+    except ValueError:
+        return jsonify({"error": "trading_date must be YYYY-MM-DD"}), 400
+    try:
+        return jsonify(repo.resolve_params_as_of(profile, trading_date))
+    except ProfileParamsUnresolvedError as exc:
+        return jsonify({"error": "unresolved", "detail": str(exc)}), 404
+    except ProfileParamsIntegrityError as exc:
+        return jsonify({"error": "integrity_error", "detail": str(exc)}), 500
+
+
+@obs_bp.route("/watchtower/cron/<profile>/reconciliation", methods=["GET"])
+def watchtower_cron_reconciliation(profile):
+    missing = _require_repo()
+    if missing:
+        return missing
+    limit = int(request.args.get("limit", "60"))
+    return jsonify({
+        "results": repo.list_reconciliation_results(profile, limit=limit),
+        "pending_queue": repo.list_pending_reconciliation(profile),
+    })
+
+
+@obs_bp.route("/watchtower/cron/<profile>/footprint", methods=["GET"])
+def watchtower_cron_footprint(profile):
+    missing = _require_repo()
+    if missing:
+        return missing
+    limit = int(request.args.get("limit", "10"))
+    return jsonify({
+        "footprints": repo.list_strategy_footprints(profile),
+        "drift_checks": repo.list_footprint_drift_checks(profile, limit=limit),
+    })
+
+
+@obs_bp.route("/watchtower/cron/<profile>/guardrail", methods=["GET"])
+def watchtower_cron_guardrail(profile):
+    missing = _require_repo()
+    if missing:
+        return missing
+    registry_row = next(
+        (row for row in repo.list_assigned_portfolios() if row.get("assigned_profile") == profile), None
+    )
+    alerts = repo.list_open_guardrail_alerts(registry_row["portfolio_key_id"]) if registry_row else []
+    return jsonify({"registry": registry_row, "open_alerts": alerts})
+
+
+@obs_bp.route("/watchtower/cron/registry", methods=["GET"])
+def watchtower_cron_registry():
+    missing = _require_repo()
+    if missing:
+        return missing
+    return jsonify(repo.list_assigned_portfolios())
 
 
 @obs_bp.route("/services", methods=["GET"])
