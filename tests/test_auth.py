@@ -1,3 +1,6 @@
+import pytest
+
+
 def test_status_unauthed(client):
     r = client.get("/auth/status")
     assert r.status_code == 200
@@ -53,3 +56,20 @@ def test_allowlisted_path_not_forced_to_401(client):
     # the guard must NOT turn it into a 401.
     r = client.post("/github-webhook")
     assert r.status_code != 401
+
+
+def test_init_auth_requires_pw_hash(monkeypatch):
+    """Verify init_auth fails fast if BT_DASH_PW_HASH is unset."""
+    import os
+    from flask import Flask
+    from app.auth import init_auth
+
+    # Save the current hash
+    pw_hash = os.environ.pop("BT_DASH_PW_HASH")
+    try:
+        app = Flask(__name__)
+        with pytest.raises(KeyError):
+            init_auth(app)
+    finally:
+        # Restore the hash so other tests are unaffected
+        os.environ["BT_DASH_PW_HASH"] = pw_hash

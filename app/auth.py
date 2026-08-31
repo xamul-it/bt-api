@@ -35,6 +35,7 @@ def status():
 
 def init_auth(app):
     """Install session config, register the auth blueprint, add the guard."""
+    _ = os.environ["BT_DASH_PW_HASH"]  # required at boot: fail fast, not per-request 500
     app.config.update(
         SECRET_KEY=os.environ["BT_DASH_SECRET_KEY"],  # required: KeyError if unset
         PERMANENT_SESSION_LIFETIME=timedelta(days=90),
