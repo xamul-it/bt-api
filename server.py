@@ -11,7 +11,6 @@ from app.fileserver import fs_bp
 from app.live import al_bp
 from app.main import mn
 from app.watchtower import obs_bp
-from app.auth import init_auth
 
 import os
 import sys
@@ -127,10 +126,6 @@ app.register_blueprint(sc_bp, url_prefix=f'{url_prefix}/sc')
 
 # Watchtower / watchdog
 app.register_blueprint(obs_bp, url_prefix=f'{url_prefix}/obs')
-
-# Session auth: config + /auth/* blueprint + before_request guard.
-# Replaces the Apache Basic Auth that used to gate /api and /dash.
-init_auth(app)
 
 @app.route('/')
 def home():
