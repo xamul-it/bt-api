@@ -39,8 +39,12 @@ else
 fi
 APP_SERVER="${APP_SERVER:-gunicorn}"
 
-#git pull -f
-"$PYTHON_BIN" -m pip install -r ./requirements.txt
+# Le dipendenze vengono installate nel deploy, non a ogni avvio del servizio:
+# un restart deve essere rapido e non deve ricostruire bt-core in editable.
+# Per un aggiornamento esplicito: BT_INSTALL_DEPS=1 ./start.sh
+if [ "${BT_INSTALL_DEPS:-0}" = "1" ]; then
+  "$PYTHON_BIN" -m pip install -r ./requirements.txt
+fi
 
 if [ "$APP_SERVER" = "gunicorn" ]; then
   exec "$PYTHON_BIN" -m gunicorn server:app -c ./gunicorn.conf.py
