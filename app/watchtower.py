@@ -1260,6 +1260,20 @@ def watchtower_cron_timeline(profile):
     return jsonify(repo.list_profile_param_versions(profile))
 
 
+@obs_bp.route("/watchtower/cron/<profile>/change-markers", methods=["POST"])
+def watchtower_cron_change_marker_create(profile):
+    missing = _require_repo()
+    if missing:
+        return missing
+    payload = request.get_json(silent=True) or {}
+    try:
+        trading_date = date.fromisoformat(str(payload.get("trading_date") or ""))
+        marker = repo.create_profile_change_marker(profile, trading_date, payload.get("label"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(marker), 201
+
+
 @obs_bp.route("/watchtower/cron/<profile>/timeline/as-of", methods=["GET"])
 def watchtower_cron_timeline_as_of(profile):
     missing = _require_repo()
