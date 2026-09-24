@@ -385,7 +385,8 @@ def _start_profile_baseline_job(profile, payload):
         raise ValueError("label is required")
     window_start = _parse_date("window_start")
     window_end = _parse_date("window_end")
-    as_of_date = _parse_date("as_of_date", required=False)
+    if str(payload.get("as_of_date") or "").strip():
+        raise ValueError("as_of_date is no longer supported; baselines use the current configuration")
     if window_end < window_start:
         raise ValueError("window_end must be on or after window_start")
 
@@ -402,7 +403,7 @@ def _start_profile_baseline_job(profile, payload):
         try:
             row = _pbl.compute_profile_baseline(
                 repo, profile=profile, label=label,
-                window_start=window_start, window_end=window_end, as_of_date=as_of_date,
+                window_start=window_start, window_end=window_end,
             )
             _pbl_job_update(job_id, status="completed", done=True, baseline_id=row.get("id"))
         except Exception as exc:  # noqa: BLE001

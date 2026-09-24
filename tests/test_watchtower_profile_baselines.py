@@ -1,4 +1,5 @@
 from flask import Flask
+import pytest
 
 
 def test_baseline_list_marks_newest_compatible_default(monkeypatch):
@@ -54,3 +55,13 @@ def test_baseline_list_preserves_rows_when_current_context_is_unavailable(monkey
 
     assert response.status_code == 200
     assert response.get_json()[0]["compatibility"]["status"] == "unknown"
+
+
+def test_baseline_creation_rejects_historical_as_of():
+    import app.watchtower as watchtower
+
+    with pytest.raises(ValueError, match="as_of_date is no longer supported"):
+        watchtower._start_profile_baseline_job("development", {
+            "label": "old", "window_start": "2020-01-01", "window_end": "2021-01-01",
+            "as_of_date": "2020-01-01",
+        })
