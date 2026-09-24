@@ -97,6 +97,28 @@ def _require_repo():
     return None
 
 
+def _baselines_with_compatibility(profile):
+    """Return baseline rows plus a diagnostic-only current-context verdict."""
+    baselines = repo.list_profile_baselines(profile)
+    if not baselines:
+        return []
+    try:
+        current = _pbl.current_baseline_identity(repo, profile)
+        return _pbl.annotate_baselines_with_compatibility(baselines, current)
+    except Exception as exc:  # A missing historical profile version must not hide saved baselines.
+        return [
+            {
+                **row,
+                "compatibility": {
+                    "status": "unknown", "is_default": False,
+                    "differences": ["current_context_unavailable"],
+                    "detail": str(exc),
+                },
+            }
+            for row in baselines
+        ]
+
+
 def _watchtower_window_args():
     window_open = request.args.get("window_open", "").strip()
     if not window_open:
@@ -1201,7 +1223,7 @@ def watchtower_cron_baselines(profile):
     missing = _require_repo()
     if missing:
         return missing
-    return jsonify(repo.list_profile_baselines(profile))
+    return jsonify(_baselines_with_compatibility(profile))
 
 
 @obs_bp.route("/watchtower/cron/<profile>/baselines", methods=["POST"])
