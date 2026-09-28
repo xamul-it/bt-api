@@ -6,7 +6,7 @@ import threading
 import traceback
 import importlib
 import re
-from app.paths import DATA_PATH, OUT_PATH, SCHEDULE_PATH
+from app.paths import CONFIG_PATH, DATA_PATH, OUT_PATH, SCHEDULE_PATH
 from flask import Blueprint, jsonify, request
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -22,6 +22,7 @@ import json
 from datetime import datetime, timedelta
 from app.service.EventEmitter import EventEmitter
 from dataclasses import asdict
+from pathlib import Path
 
 # Whitelist of allowed modules for dynamic imports (security)
 ALLOWED_MODULES = {
@@ -36,6 +37,58 @@ ALLOWED_MODULES = {
 sc_bp = Blueprint('scheduler', __name__)
 logger = logging.getLogger(__name__)
 
+SCHEDULER_STATE_PATH = Path(
+    os.environ.get("BT_SCHEDULER_STATE_PATH", str(Path(CONFIG_PATH) / "scheduler-state.json"))
+)
+_scheduler_state_lock = threading.Lock()
+
+
+def _load_scheduler_state():
+    try:
+        payload = json.loads(SCHEDULER_STATE_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {"scheduler_enabled": True, "jobs": {}}
+    if not isinstance(payload, dict):
+        return {"scheduler_enabled": True, "jobs": {}}
+    jobs = payload.get("jobs") if isinstance(payload.get("jobs"), dict) else {}
+    return {
+        "scheduler_enabled": payload.get("scheduler_enabled") is not False,
+        "jobs": jobs,
+    }
+
+
+def _save_scheduler_state(state):
+    SCHEDULER_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temporary = SCHEDULER_STATE_PATH.with_suffix(SCHEDULER_STATE_PATH.suffix + ".tmp")
+    temporary.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+    temporary.replace(SCHEDULER_STATE_PATH)
+
+
+def _set_scheduler_enabled(enabled):
+    with _scheduler_state_lock:
+        state = _load_scheduler_state()
+        state["scheduler_enabled"] = bool(enabled)
+        _save_scheduler_state(state)
+
+
+def _job_enabled(job_id):
+    state = _load_scheduler_state()
+    job_state = state["jobs"].get(job_id)
+    return not isinstance(job_state, dict) or job_state.get("enabled") is not False
+
+
+def _set_job_enabled(job_id, enabled):
+    with _scheduler_state_lock:
+        state = _load_scheduler_state()
+        state["jobs"][job_id] = {"enabled": bool(enabled)}
+        _save_scheduler_state(state)
+
+
+def _restore_job_state(job):
+    if not _job_enabled(job.id):
+        job.pause()
+    return job
+
 emitter = EventEmitter()
 # Inizializza lo scheduler
 
@@ -48,8 +101,7 @@ executors = {
 # Crea lo scheduler con l'esecutore personalizzato
 scheduler = BackgroundScheduler(executors=executors)
 
-scheduler.start()
-scheduler.pause()
+scheduler.start(paused=True)
 
 IMMEDIATE="_immediate"
 
@@ -59,12 +111,18 @@ IMMEDIATE="_immediate"
 
 #scheduler.add_job(tk_srv.init_tickers, CronTrigger(hour='20', minute=0), id='TickersList', replace_existing=True, 
 #                  max_instances=1)
-scheduler.add_job(tk_srv.init_tickers, CronTrigger(hour='20', minute=0), id='Aggiorna ALLMIB', replace_existing=True, 
-                  max_instances=1, kwargs={"list_name":"allmib"})
-scheduler.add_job(tk_srv.init_tickers, CronTrigger(hour='20', minute=0), id='Aggiorna NASDAQ 100', replace_existing=True, 
-                  max_instances=1,  kwargs={"list_name":"NASDAQ 100"})
-scheduler.add_job(tk_srv.init_tickers, CronTrigger(hour='20', minute=0), id='Aggiorna NASDAQ 30', replace_existing=True, 
-                  max_instances=1,  kwargs={"list_name":"NASDAQ 30"})
+_restore_job_state(scheduler.add_job(
+    tk_srv.init_tickers, CronTrigger(hour='20', minute=0), id='Aggiorna ALLMIB',
+    replace_existing=True, max_instances=1, kwargs={"list_name":"allmib"},
+))
+_restore_job_state(scheduler.add_job(
+    tk_srv.init_tickers, CronTrigger(hour='20', minute=0), id='Aggiorna NASDAQ 100',
+    replace_existing=True, max_instances=1, kwargs={"list_name":"NASDAQ 100"},
+))
+_restore_job_state(scheduler.add_job(
+    tk_srv.init_tickers, CronTrigger(hour='20', minute=0), id='Aggiorna NASDAQ 30',
+    replace_existing=True, max_instances=1, kwargs={"list_name":"NASDAQ 30"},
+))
 #scheduler.add_job(tk_srv.read_ticker_csv_files, 'interval', hours=24, start_date=datetime.now() + timedelta(seconds=10), id='Tickers list')
 
 def load_jobs(data=None):
@@ -95,7 +153,7 @@ def load_jobs(data=None):
                     #trigger=DateTrigger(run_date=datetime.now())
                     logger.debug(f"Avvio schedulazioni {id}:{trigger}:{run_config}")
                     # Sovrascrive il job esistente con lo stesso id)
-                    scheduler.add_job(
+                    job = scheduler.add_job(
                         mn_srv.runstrat,
                         trigger=trigger,
                         id=id,
@@ -103,6 +161,7 @@ def load_jobs(data=None):
                         replace_existing=True,
                         max_instances=1
                     )
+                    _restore_job_state(job)
     
                 except Exception  as e:
                     logger.exception(f"Errore nel parsing del file {filename}")
@@ -110,6 +169,8 @@ def load_jobs(data=None):
 
 
 load_jobs()
+if _load_scheduler_state()["scheduler_enabled"]:
+    scheduler.resume()
 logger.info("---Avvio schedulazioni")
 
 
@@ -266,7 +327,8 @@ def list_jobs():
             'trigger': str(job.trigger),
             'function': getattr(job.func, '__name__', repr(job.func)),
             'args': str(job.args),
-            "status": job_event_cache.get(job.id, "NA") 
+            "status": job_event_cache.get(job.id, "NA"),
+            "enabled": _job_enabled(job.id),
         }
         jobs_list.append(job_info)
     
@@ -282,12 +344,14 @@ def scheduler_status():
 @sc_bp.route('/stop', methods=['POST'])
 def stop_scheduler():
     scheduler.pause()
+    _set_scheduler_enabled(False)
     return jsonify({'message': 'Scheduler stopped successfully'})
 
 @sc_bp.route('/start', methods=['POST'])
 def start_scheduler():
     if scheduler.state == STATE_PAUSED:
         scheduler.resume()
+        _set_scheduler_enabled(True)
         return jsonify({'message': 'Scheduler started successfully'})
     return jsonify({'message': 'Scheduler is already running'})
 
@@ -296,6 +360,7 @@ def pause_job(job_id):
     job = scheduler.get_job(job_id)
     if job:
         job.pause()
+        _set_job_enabled(job_id, False)
         return jsonify({'message': f'Job {job_id} paused successfully'})
     return jsonify({'message': 'Job not found'}), 404
 
@@ -304,6 +369,10 @@ def delete_job(job_id):
     job = scheduler.get_job(job_id)
     if job:
         scheduler.remove_job(job_id)
+        with _scheduler_state_lock:
+            state = _load_scheduler_state()
+            state["jobs"].pop(job_id, None)
+            _save_scheduler_state(state)
         file_path = os.path.join(SCHEDULE_PATH, f"{job_id}.json")
         if os.path.exists(file_path):
             os.remove(file_path)
@@ -316,6 +385,7 @@ def resume_job(job_id):
     job = scheduler.get_job(job_id)
     if job:
         job.resume()
+        _set_job_enabled(job_id, True)
         return jsonify({'message': f'Job {job_id} resumed successfully'})
     return jsonify({'message': 'Job not found'}), 404
 
