@@ -1,7 +1,10 @@
 import os
 
 bind = os.getenv('GUNICORN_BIND', f"0.0.0.0:{os.getenv('SERVER_PORT', '9090')}")
-workers = int(os.getenv('GUNICORN_WORKERS', '2'))
+# The API embeds an in-process APScheduler. Multiple worker processes would
+# each create an independent scheduler and duplicate every scheduled job.
+# Keep one worker and use threads for concurrent HTTP requests.
+workers = int(os.getenv('GUNICORN_WORKERS', '1'))
 threads = int(os.getenv('GUNICORN_THREADS', '4'))
 timeout = int(os.getenv('GUNICORN_TIMEOUT', '60'))
 graceful_timeout = int(os.getenv('GUNICORN_GRACEFUL_TIMEOUT', '30'))
