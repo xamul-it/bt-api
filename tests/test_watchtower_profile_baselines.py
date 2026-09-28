@@ -67,7 +67,7 @@ def test_baseline_creation_rejects_historical_as_of():
         })
 
 
-def test_overview_hides_drift_from_non_current_baseline(monkeypatch):
+def test_overview_labels_but_keeps_drift_from_non_current_baseline(monkeypatch):
     import app.watchtower as watchtower
 
     class Repo:
@@ -89,7 +89,8 @@ def test_overview_hides_drift_from_non_current_baseline(monkeypatch):
     app = Flask(__name__)
     app.register_blueprint(watchtower.obs_bp, url_prefix="/dyn/obs")
     payload = app.test_client().get("/dyn/obs/watchtower/cron/development/overview").get_json()
-    assert payload["latest_profile_baseline_drift_check"] is None
+    assert payload["latest_profile_baseline_drift_check"]["baseline_id"] == 1
+    assert payload["current_profile_baseline_drift_check"] is None
     assert payload["last_profile_baseline_drift_check"]["baseline_id"] == 1
     assert payload["profile_baseline_drift_state"] == {
         "status": "not_checked_current_baseline", "baseline_id": 2, "last_check_baseline_id": 1,
@@ -121,4 +122,5 @@ def test_overview_keeps_drift_for_current_baseline(monkeypatch):
     app.register_blueprint(watchtower.obs_bp, url_prefix="/dyn/obs")
     payload = app.test_client().get("/dyn/obs/watchtower/cron/development/overview").get_json()
     assert payload["latest_profile_baseline_drift_check"] == check
+    assert payload["current_profile_baseline_drift_check"] == check
     assert payload["profile_baseline_drift_state"]["status"] == "current"

@@ -1217,20 +1217,21 @@ def watchtower_cron_overview(profile):
     last_check = overview.get("latest_profile_baseline_drift_check")
     overview["last_profile_baseline_drift_check"] = last_check
     if current_baseline is None:
-        overview["latest_profile_baseline_drift_check"] = None
+        overview["current_profile_baseline_drift_check"] = None
         overview["profile_baseline_drift_state"] = {
             "status": "no_compatible_baseline",
             "baseline_id": None,
             "last_check_baseline_id": last_check.get("baseline_id") if last_check else None,
         }
     elif last_check and last_check.get("baseline_id") == current_baseline.get("id"):
+        overview["current_profile_baseline_drift_check"] = last_check
         overview["profile_baseline_drift_state"] = {
             "status": "current",
             "baseline_id": current_baseline["id"],
             "last_check_baseline_id": last_check["baseline_id"],
         }
     else:
-        overview["latest_profile_baseline_drift_check"] = None
+        overview["current_profile_baseline_drift_check"] = None
         overview["profile_baseline_drift_state"] = {
             "status": "not_checked_current_baseline",
             "baseline_id": current_baseline["id"],
