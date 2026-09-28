@@ -20,7 +20,14 @@ def _check_profile(repo, profile, recent_window_days):
         None,
     )
     if baseline is None:
-        return {"profile": profile, "status": "skipped", "reason": "no_compatible_baseline"}
+        verdict = {"status": "no_compatible_baseline", "reason": "no_compatible_baseline"}
+        stored = repo.record_profile_baseline_drift_check(
+            profile, None, verdict["status"], None, verdict,
+        )
+        return {
+            "profile": profile, "baseline_id": None,
+            "status": verdict["status"], "check_id": stored["id"],
+        }
 
     verdict = pbl.compute_baseline_drift(
         repo, baseline, recent_window_days=recent_window_days,
@@ -44,7 +51,15 @@ def _run_checks(repo, recent_window_days):
             results.append(_check_profile(repo, profile, recent_window_days))
         except Exception as exc:  # profiles are independent
             logger.exception("Profile baseline drift failed for %s", profile)
-            results.append({"profile": profile, "status": "error", "error": str(exc)})
+            verdict = {"status": "error", "error": str(exc)}
+            try:
+                stored = repo.record_profile_baseline_drift_check(
+                    profile, None, "error", None, verdict,
+                )
+                verdict["check_id"] = stored["id"]
+            except Exception:
+                logger.exception("Could not persist baseline drift failure for %s", profile)
+            results.append({"profile": profile, **verdict})
     return results
 
 
@@ -64,6 +79,8 @@ def run_profile_baseline_drift(recent_window_days=pbl.RECENT_WINDOW_DEFAULT):
             return [{"status": "skipped", "reason": "already_running"}]
         try:
             results = _run_checks(repo, int(recent_window_days))
+            pruned = repo.prune_profile_baseline_drift_checks()
+            logger.info("Profile baseline drift history pruned: %s rows", pruned)
             logger.info("Profile baseline drift completed: %s", results)
             return results
         finally:
