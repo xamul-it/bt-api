@@ -124,3 +124,39 @@ def test_overview_keeps_drift_for_current_baseline(monkeypatch):
     assert payload["latest_profile_baseline_drift_check"] == check
     assert payload["current_profile_baseline_drift_check"] == check
     assert payload["profile_baseline_drift_state"]["status"] == "current"
+
+
+def test_drift_history_labels_every_retained_row(monkeypatch):
+    import app.watchtower as watchtower
+
+    class Repo:
+        def available(self):
+            return True
+
+        def list_profile_baselines(self, _profile):
+            return [{"id": 2, "label": "current"}, {"id": 1, "label": "old"}]
+
+        def list_profile_baseline_drift_checks(self, _profile, limit):
+            assert limit == 5000
+            return [
+                {"id": 3, "baseline_id": 2, "status": "ok"},
+                {"id": 2, "baseline_id": 1, "status": "warning"},
+                {"id": 1, "baseline_id": None, "status": "error"},
+            ]
+
+    monkeypatch.setattr(watchtower, "repo", Repo())
+    monkeypatch.setattr(watchtower._pbl, "current_baseline_identity", lambda *_args: {})
+    monkeypatch.setattr(
+        watchtower._pbl, "annotate_baselines_with_compatibility",
+        lambda rows, _current: [
+            {**rows[0], "compatibility": {"status": "compatible", "is_default": True}},
+            {**rows[1], "compatibility": {"status": "different", "is_default": False}},
+        ],
+    )
+    app = Flask(__name__)
+    app.register_blueprint(watchtower.obs_bp, url_prefix="/dyn/obs")
+    payload = app.test_client().get(
+        "/dyn/obs/watchtower/cron/development/baseline-drift-checks",
+    ).get_json()
+    assert [row["relation"] for row in payload] == ["current", "historical", "unassociated"]
+    assert [row["baseline_label"] for row in payload] == ["current", "old", None]

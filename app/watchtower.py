@@ -1304,6 +1304,34 @@ def watchtower_cron_baseline_drift(profile, baseline_id):
     return jsonify(verdict)
 
 
+@obs_bp.route("/watchtower/cron/<profile>/baseline-drift-checks", methods=["GET"])
+def watchtower_cron_baseline_drift_checks(profile):
+    missing = _require_repo()
+    if missing:
+        return missing
+    try:
+        limit = max(1, min(5000, int(request.args.get("limit", 5000))))
+    except (TypeError, ValueError):
+        limit = 5000
+    baselines = _baselines_with_compatibility(profile)
+    baseline_by_id = {row["id"]: row for row in baselines}
+    current_id = next(
+        (row["id"] for row in baselines if row.get("compatibility", {}).get("is_default")),
+        None,
+    )
+    rows = repo.list_profile_baseline_drift_checks(profile, limit=limit)
+    for row in rows:
+        baseline = baseline_by_id.get(row.get("baseline_id"))
+        row["baseline_label"] = baseline.get("label") if baseline else None
+        if row.get("baseline_id") is None:
+            row["relation"] = "unassociated"
+        elif row.get("baseline_id") == current_id:
+            row["relation"] = "current"
+        else:
+            row["relation"] = "historical"
+    return jsonify(rows)
+
+
 @obs_bp.route("/watchtower/cron/<profile>/timeline", methods=["GET"])
 def watchtower_cron_timeline(profile):
     missing = _require_repo()
