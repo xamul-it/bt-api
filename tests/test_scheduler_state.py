@@ -68,3 +68,12 @@ def test_pause_and_resume_routes_persist_job_state(monkeypatch, tmp_path):
     assert scheduler_module._job_enabled("drift") is False
     assert client.post("/dyn/sc/resume_job/drift").status_code == 200
     assert scheduler_module._job_enabled("drift") is True
+
+
+def test_hourly_profile_baseline_drift_job_is_registered():
+    import app.scheduler as scheduler_module
+
+    job = scheduler_module.scheduler.get_job("Controllo drift baseline profili")
+    assert job is not None
+    assert "minute='0'" in str(job.trigger)
+    assert job.max_instances == 1

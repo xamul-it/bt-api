@@ -18,6 +18,7 @@ import time
 from datetime import datetime
 import app.tickers as tk_srv
 import app.service.main_service as mn_srv
+import app.service.profile_baseline_drift_service as baseline_drift_srv
 import json
 from datetime import datetime, timedelta
 from app.service.EventEmitter import EventEmitter
@@ -114,6 +115,15 @@ IMMEDIATE="_immediate"
 _restore_job_state(scheduler.add_job(
     tk_srv.init_tickers, CronTrigger(hour='20', minute=0), id='Aggiorna ALLMIB',
     replace_existing=True, max_instances=1, kwargs={"list_name":"allmib"},
+))
+_restore_job_state(scheduler.add_job(
+    baseline_drift_srv.run_profile_baseline_drift,
+    CronTrigger(minute=0),
+    id="Controllo drift baseline profili",
+    replace_existing=True,
+    max_instances=1,
+    coalesce=True,
+    misfire_grace_time=1800,
 ))
 _restore_job_state(scheduler.add_job(
     tk_srv.init_tickers, CronTrigger(hour='20', minute=0), id='Aggiorna NASDAQ 100',
