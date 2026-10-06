@@ -419,8 +419,7 @@ def pause_job(job_id):
 
 @sc_bp.route('/delete_job/<job_id>', methods=['POST'])
 def delete_job(job_id):
-    if job_id in MANAGED_WATCHTOWER_JOB_IDS:
-        return jsonify({'message': 'Managed Watchtower jobs cannot be deleted; disable them instead.'}), 400
+    return jsonify({'message': 'Scheduler jobs are managed definitions; disable them instead of deleting.'}), 400
     job = scheduler.get_job(job_id)
     if job:
         scheduler.remove_job(job_id)
@@ -466,9 +465,8 @@ def run_job(job_id):
 
 @sc_bp.route('/update_job', methods=['POST'])
 def update_job():
+    return jsonify({'message': 'Scheduler schedules are fixed managed definitions; only enable/disable is supported.'}), 400
     id = request.get_json().get('id')
-    if id in MANAGED_WATCHTOWER_JOB_IDS:
-        return jsonify({'message': 'Managed Watchtower schedules have fixed safe timing.'}), 400
     name = request.get_json().get('name')
     destination_path = os.path.join(SCHEDULE_PATH, f"{name}.json")
     if id != name:
