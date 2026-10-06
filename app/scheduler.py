@@ -87,7 +87,7 @@ def _set_job_enabled(job_id, enabled):
         _save_scheduler_state(state)
 
 
-def _set_job_runtime(job_id, status, error=None):
+def _set_job_runtime(job_id, status, error=None, output=None):
     """Persist a human-readable lifecycle state across API restarts."""
     with _scheduler_state_lock:
         state = _load_scheduler_state()
@@ -102,6 +102,8 @@ def _set_job_runtime(job_id, status, error=None):
             job["last_error"] = str(error)[-2000:]
         elif status == "eseguito":
             job.pop("last_error", None)
+        if output is not None:
+            job["last_output"] = str(output)[-4000:]
         _save_scheduler_state(state)
 
 
@@ -482,6 +484,7 @@ def list_jobs():
             "last_started_at": runtime.get("last_started_at"),
             "last_finished_at": runtime.get("last_finished_at"),
             "last_error": runtime.get("last_error"),
+            "last_output": runtime.get("last_output"),
         }
         jobs_list.append(job_info)
     
@@ -591,7 +594,9 @@ def job_listener(event):
         job_id = _base_job_id(event.job_id)
         if event.code == EVENT_JOB_EXECUTED:
             job_event_cache[job_id] = 'eseguito'
-            _set_job_runtime(job_id, 'eseguito')
+            result = getattr(event, 'retval', None)
+            output = result.get('output') if isinstance(result, dict) else result
+            _set_job_runtime(job_id, 'eseguito', output=output)
         elif event.code == EVENT_JOB_ERROR:
             job_event_cache[job_id] = 'errore'
             _set_job_runtime(job_id, 'errore', getattr(event, 'exception', None))
