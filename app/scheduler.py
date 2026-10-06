@@ -214,9 +214,6 @@ if _load_scheduler_state()["scheduler_enabled"]:
             "Watchtower — poll Alpaca", "Watchtower — watchdog profili", "Watchtower — replay riconciliazioni",
             "Controllo drift baseline profili",
         ]
-        # Other registered maintenance jobs (ticker refreshes) are also
-        # refreshed once after a restart. Strategy jobs are never loaded here.
-        recovery_order.extend(job.id for job in scheduler.get_jobs() if job.id not in recovery_order)
         for index, job_id in enumerate(recovery_order):
             job = scheduler.get_job(job_id)
             if job and _job_enabled(job_id):
