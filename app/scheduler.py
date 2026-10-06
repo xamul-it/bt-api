@@ -114,6 +114,10 @@ MANAGED_WATCHTOWER_JOB_IDS = {
     "Controllo drift baseline profili",
 }
 
+
+def _base_job_id(job_id):
+    return job_id[:-len(IMMEDIATE)] if job_id.endswith(IMMEDIATE) else job_id
+
 # Schedula il job di caricamento ticker
 #scheduler.add_job(tk_srv.init_tickers(), 'interval', hours=24, start_date=datetime.now() + timedelta(seconds=10), 
 #                  id='Tickers list')
@@ -375,7 +379,7 @@ def list_jobs():
             'trigger': str(job.trigger),
             'function': getattr(job.func, '__name__', repr(job.func)),
             'args': str(job.args),
-            "status": job_event_cache.get(job.id, "NA"),
+            "status": job_event_cache.get(job.id, "in attesa"),
             "enabled": _job_enabled(job.id),
             "managed": job.id in MANAGED_WATCHTOWER_JOB_IDS,
         }
@@ -493,14 +497,15 @@ job_event_cache = {}
 def job_listener(event):
     with lock: #devo evitare copie sovrapposte
         logger.info(f"Event for {event.job_id} - {event.code}")
+        job_id = _base_job_id(event.job_id)
         if event.code == EVENT_JOB_EXECUTED:
-            job_event_cache[event.job_id] = 'executed'
+            job_event_cache[job_id] = 'eseguito'
         elif event.code == EVENT_JOB_ERROR:
-            job_event_cache[event.job_id] = 'error'
+            job_event_cache[job_id] = 'errore'
         elif event.code == EVENT_JOB_MISSED:
-            job_event_cache[event.job_id] = 'missed'
+            job_event_cache[job_id] = 'trigger mancato'
         elif event.code == EVENT_JOB_SUBMITTED:
-            job_event_cache[event.job_id] = 'submitted'
+            job_event_cache[job_id] = 'in esecuzione'
 
         if event.code == EVENT_JOB_ERROR:
             logger.error(f"Il job {event.job_id} ha generato un'eccezione")
