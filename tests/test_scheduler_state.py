@@ -134,3 +134,12 @@ def test_update_managed_schedule_validates_and_persists(monkeypatch, tmp_path):
     assert response.status_code == 200
     assert "hour='17'" in str(job.trigger)
     assert scheduler_module._schedule_payload("Watchtower — poll Alpaca")["minute"] == 30
+
+
+def test_default_schedule_is_available_before_any_edit(monkeypatch, tmp_path):
+    import app.scheduler as scheduler_module
+
+    monkeypatch.setattr(scheduler_module, "SCHEDULER_STATE_PATH", tmp_path / "scheduler-state.json")
+    assert scheduler_module._schedule_payload("Watchtower — watchdog profili") == {
+        "frequency": "daily", "hour": 16, "minute": 10,
+    }

@@ -132,11 +132,24 @@ MANAGED_WATCHTOWER_JOB_IDS = {
     "Controllo drift baseline profili",
 }
 
+# Displayable defaults.  They are also returned by /jobs so the edit form is
+# always pre-filled with the schedule that is currently in force.
+DEFAULT_JOB_SCHEDULES = {
+    "Watchtower — poll Alpaca": {"frequency": "daily", "hour": 16, "minute": 5},
+    "Watchtower — watchdog profili": {"frequency": "daily", "hour": 16, "minute": 10},
+    "Watchtower — replay riconciliazioni": {"frequency": "daily", "hour": 16, "minute": 15},
+    "Controllo drift baseline profili": {"frequency": "hourly", "hour": 0, "minute": 0},
+    "Aggiorna ALLMIB": {"frequency": "daily", "hour": 20, "minute": 0},
+    "Aggiorna NASDAQ 100": {"frequency": "daily", "hour": 20, "minute": 0},
+    "Aggiorna NASDAQ 30": {"frequency": "daily", "hour": 20, "minute": 0},
+}
+
 # These are the only recurring schedules this application may configure.  In
 # particular, no endpoint in this blueprint accepts a strategy callable.
 def _schedule_payload(job_id):
     job = _load_scheduler_state()["jobs"].get(job_id, {})
-    return job.get("schedule") if isinstance(job, dict) else None
+    saved = job.get("schedule") if isinstance(job, dict) else None
+    return saved or DEFAULT_JOB_SCHEDULES.get(job_id)
 
 
 def _cron_trigger_from_payload(payload, default_trigger):
