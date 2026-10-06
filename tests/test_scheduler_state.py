@@ -104,3 +104,33 @@ def test_watchtower_recovery_jobs_are_registered_and_never_call_runstrat():
         assert job is not None
         assert "runstrat" not in getattr(job.func, "__name__", "")
         assert job.max_instances == 1
+
+
+def test_update_managed_schedule_validates_and_persists(monkeypatch, tmp_path):
+    import app.scheduler as scheduler_module
+
+    monkeypatch.setattr(scheduler_module, "SCHEDULER_STATE_PATH", tmp_path / "scheduler-state.json")
+
+    class Job:
+        def __init__(self):
+            self.trigger = scheduler_module.CronTrigger(hour=16, minute=5)
+
+        def reschedule(self, trigger):
+            self.trigger = trigger
+
+    job = Job()
+
+    class Scheduler:
+        def get_job(self, job_id):
+            return job if job_id == "Watchtower — poll Alpaca" else None
+
+    monkeypatch.setattr(scheduler_module, "scheduler", Scheduler())
+    app = Flask(__name__)
+    app.register_blueprint(scheduler_module.sc_bp, url_prefix="/dyn/sc")
+    response = app.test_client().post("/dyn/sc/update_job", json={
+        "id": "Watchtower — poll Alpaca",
+        "schedule": {"frequency": "daily", "hour": 17, "minute": 30},
+    })
+    assert response.status_code == 200
+    assert "hour='17'" in str(job.trigger)
+    assert scheduler_module._schedule_payload("Watchtower — poll Alpaca")["minute"] == 30

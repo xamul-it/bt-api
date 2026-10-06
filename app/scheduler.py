@@ -132,6 +132,70 @@ MANAGED_WATCHTOWER_JOB_IDS = {
     "Controllo drift baseline profili",
 }
 
+# These are the only recurring schedules this application may configure.  In
+# particular, no endpoint in this blueprint accepts a strategy callable.
+EDITABLE_MANAGED_JOB_IDS = frozenset(MANAGED_WATCHTOWER_JOB_IDS)
+
+
+def _schedule_payload(job_id):
+    job = _load_scheduler_state()["jobs"].get(job_id, {})
+    return job.get("schedule") if isinstance(job, dict) else None
+
+
+def _cron_trigger_from_payload(payload, default_trigger):
+    """Return a validated cron trigger, falling back to the shipped default."""
+    if not isinstance(payload, dict):
+        return default_trigger
+    frequency = payload.get("frequency")
+    try:
+        hour = int(payload.get("hour"))
+        minute = int(payload.get("minute"))
+    except (TypeError, ValueError):
+        return default_trigger
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        return default_trigger
+    if frequency == "hourly":
+        return CronTrigger(minute=minute)
+    if frequency == "daily":
+        return CronTrigger(hour=hour, minute=minute)
+    if frequency == "weekly" and payload.get("day_of_week") in {
+        "mon", "tue", "wed", "thu", "fri", "sat", "sun"
+    }:
+        return CronTrigger(day_of_week=payload["day_of_week"], hour=hour, minute=minute)
+    return default_trigger
+
+
+def _managed_trigger(job_id, default_trigger):
+    return _cron_trigger_from_payload(_schedule_payload(job_id), default_trigger)
+
+
+def _validate_schedule_payload(payload):
+    if not isinstance(payload, dict):
+        return None, "Configurazione mancante"
+    frequency = payload.get("frequency")
+    if frequency not in {"hourly", "daily", "weekly"}:
+        return None, "Frequenza non valida"
+    try:
+        hour, minute = int(payload.get("hour")), int(payload.get("minute"))
+    except (TypeError, ValueError):
+        return None, "Ora e minuti devono essere numerici"
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        return None, "Ora/minuti fuori intervallo"
+    clean = {"frequency": frequency, "hour": hour, "minute": minute}
+    if frequency == "weekly":
+        day = payload.get("day_of_week")
+        if day not in {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}:
+            return None, "Giorno della settimana non valido"
+        clean["day_of_week"] = day
+    return clean, None
+
+
+def _set_job_schedule(job_id, payload):
+    with _scheduler_state_lock:
+        state = _load_scheduler_state()
+        state["jobs"].setdefault(job_id, {})["schedule"] = payload
+        _save_scheduler_state(state)
+
 
 def _base_job_id(job_id):
     return job_id[:-len(IMMEDIATE)] if job_id.endswith(IMMEDIATE) else job_id
@@ -148,22 +212,22 @@ _restore_job_state(scheduler.add_job(
 ))
 _restore_job_state(scheduler.add_job(
     watchtower_scheduler_srv.poll_alpaca_orders,
-    CronTrigger(hour=16, minute=5), id="Watchtower — poll Alpaca",
+    _managed_trigger("Watchtower — poll Alpaca", CronTrigger(hour=16, minute=5)), id="Watchtower — poll Alpaca",
     replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=86400,
 ))
 _restore_job_state(scheduler.add_job(
     watchtower_scheduler_srv.detect_missed_scheduled_runs,
-    CronTrigger(hour=16, minute=10), id="Watchtower — watchdog profili",
+    _managed_trigger("Watchtower — watchdog profili", CronTrigger(hour=16, minute=10)), id="Watchtower — watchdog profili",
     replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=86400,
 ))
 _restore_job_state(scheduler.add_job(
     watchtower_scheduler_srv.replay_reconciliation_catchup,
-    CronTrigger(hour=16, minute=15), id="Watchtower — replay riconciliazioni",
+    _managed_trigger("Watchtower — replay riconciliazioni", CronTrigger(hour=16, minute=15)), id="Watchtower — replay riconciliazioni",
     replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=86400,
 ))
 _restore_job_state(scheduler.add_job(
     baseline_drift_srv.run_profile_baseline_drift,
-    CronTrigger(minute=0),
+    _managed_trigger("Controllo drift baseline profili", CronTrigger(minute=0)),
     id="Controllo drift baseline profili",
     replace_existing=True,
     max_instances=1,
@@ -401,6 +465,8 @@ def list_jobs():
             "status": job_event_cache.get(job.id, runtime.get("last_status", "in attesa")),
             "enabled": _job_enabled(job.id),
             "managed": job.id in MANAGED_WATCHTOWER_JOB_IDS,
+            "editable": job.id in EDITABLE_MANAGED_JOB_IDS,
+            "schedule": _schedule_payload(job.id),
             "last_started_at": runtime.get("last_started_at"),
             "last_finished_at": runtime.get("last_finished_at"),
             "last_error": runtime.get("last_error"),
@@ -487,26 +553,19 @@ def run_job(job_id):
 
 @sc_bp.route('/update_job', methods=['POST'])
 def update_job():
-    return jsonify({'message': 'Scheduler schedules are fixed managed definitions; only enable/disable is supported.'}), 400
-    id = request.get_json().get('id')
-    name = request.get_json().get('name')
-    destination_path = os.path.join(SCHEDULE_PATH, f"{name}.json")
-    if id != name:
-        source_path = os.path.join(SCHEDULE_PATH, f"{id}.json")
-        shutil.move(source_path, destination_path)
-
-    scheduleType = request.get_json().get('type')
-    with open(destination_path, 'r', encoding='utf-8') as json_file:
-        # Carica il file JSON in un dizionario
-        r = json.load(json_file)
-        r["scheduleType"] = scheduleType
-        r["id"] = name
-        with open(destination_path, 'w') as f:
-            json.dump(r, f)
-    #Rimuovo il vecchio job
-    scheduler.remove_job(id)
-    load_jobs()
-    return jsonify({'message': f'Job {id} executed immediately and original schedule restored'})
+    payload = request.get_json(silent=True) or {}
+    job_id = payload.get('id')
+    if job_id not in EDITABLE_MANAGED_JOB_IDS:
+        return jsonify({'message': 'Sono modificabili solo le attività Watchtower/manutenzione.'}), 403
+    job = scheduler.get_job(job_id)
+    if not job:
+        return jsonify({'message': 'Job non trovato'}), 404
+    schedule, error = _validate_schedule_payload(payload.get('schedule'))
+    if error:
+        return jsonify({'message': error}), 400
+    job.reschedule(trigger=_cron_trigger_from_payload(schedule, job.trigger))
+    _set_job_schedule(job_id, schedule)
+    return jsonify({'message': 'Schedulazione aggiornata', 'schedule': schedule})
     
 
 
