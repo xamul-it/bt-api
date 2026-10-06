@@ -43,6 +43,18 @@ def test_global_scheduler_state_survives_reload(monkeypatch, tmp_path):
     assert scheduler_module._load_scheduler_state()["scheduler_enabled"] is True
 
 
+def test_job_runtime_state_survives_reload(monkeypatch, tmp_path):
+    import app.scheduler as scheduler_module
+
+    state_path = tmp_path / "scheduler-state.json"
+    monkeypatch.setattr(scheduler_module, "SCHEDULER_STATE_PATH", state_path)
+    scheduler_module._set_job_runtime("Watchtower — poll Alpaca", "errore", "network unavailable")
+    saved = scheduler_module._load_scheduler_state()["jobs"]["Watchtower — poll Alpaca"]
+    assert saved["last_status"] == "errore"
+    assert saved["last_error"] == "network unavailable"
+    assert saved["last_finished_at"]
+
+
 def test_pause_and_resume_routes_persist_job_state(monkeypatch, tmp_path):
     import app.scheduler as scheduler_module
 

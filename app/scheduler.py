@@ -83,7 +83,25 @@ def _job_enabled(job_id):
 def _set_job_enabled(job_id, enabled):
     with _scheduler_state_lock:
         state = _load_scheduler_state()
-        state["jobs"][job_id] = {"enabled": bool(enabled)}
+        state["jobs"].setdefault(job_id, {})["enabled"] = bool(enabled)
+        _save_scheduler_state(state)
+
+
+def _set_job_runtime(job_id, status, error=None):
+    """Persist a human-readable lifecycle state across API restarts."""
+    with _scheduler_state_lock:
+        state = _load_scheduler_state()
+        job = state["jobs"].setdefault(job_id, {})
+        job["last_status"] = status
+        timestamp = datetime.now().astimezone().isoformat()
+        if status == "in esecuzione":
+            job["last_started_at"] = timestamp
+        else:
+            job["last_finished_at"] = timestamp
+        if error:
+            job["last_error"] = str(error)[-2000:]
+        elif status == "eseguito":
+            job.pop("last_error", None)
         _save_scheduler_state(state)
 
 
@@ -373,15 +391,19 @@ def list_jobs():
             next_run_time = job.next_run_time.strftime('%Y-%m-%d %H:%M:%S') 
         except:
             next_run_time = 'None'
+        runtime = _load_scheduler_state()["jobs"].get(job.id, {})
         job_info = {
             'id': job.id,
             'next_run_time': next_run_time,
             'trigger': str(job.trigger),
             'function': getattr(job.func, '__name__', repr(job.func)),
             'args': str(job.args),
-            "status": job_event_cache.get(job.id, "in attesa"),
+            "status": job_event_cache.get(job.id, runtime.get("last_status", "in attesa")),
             "enabled": _job_enabled(job.id),
             "managed": job.id in MANAGED_WATCHTOWER_JOB_IDS,
+            "last_started_at": runtime.get("last_started_at"),
+            "last_finished_at": runtime.get("last_finished_at"),
+            "last_error": runtime.get("last_error"),
         }
         jobs_list.append(job_info)
     
@@ -498,12 +520,16 @@ def job_listener(event):
         job_id = _base_job_id(event.job_id)
         if event.code == EVENT_JOB_EXECUTED:
             job_event_cache[job_id] = 'eseguito'
+            _set_job_runtime(job_id, 'eseguito')
         elif event.code == EVENT_JOB_ERROR:
             job_event_cache[job_id] = 'errore'
+            _set_job_runtime(job_id, 'errore', getattr(event, 'exception', None))
         elif event.code == EVENT_JOB_MISSED:
             job_event_cache[job_id] = 'trigger mancato'
+            _set_job_runtime(job_id, 'trigger mancato')
         elif event.code == EVENT_JOB_SUBMITTED:
             job_event_cache[job_id] = 'in esecuzione'
+            _set_job_runtime(job_id, 'in esecuzione')
 
         if event.code == EVENT_JOB_ERROR:
             logger.error(f"Il job {event.job_id} ha generato un'eccezione")
