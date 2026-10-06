@@ -134,9 +134,6 @@ MANAGED_WATCHTOWER_JOB_IDS = {
 
 # These are the only recurring schedules this application may configure.  In
 # particular, no endpoint in this blueprint accepts a strategy callable.
-EDITABLE_MANAGED_JOB_IDS = frozenset(MANAGED_WATCHTOWER_JOB_IDS)
-
-
 def _schedule_payload(job_id):
     job = _load_scheduler_state()["jobs"].get(job_id, {})
     return job.get("schedule") if isinstance(job, dict) else None
@@ -465,7 +462,9 @@ def list_jobs():
             "status": job_event_cache.get(job.id, runtime.get("last_status", "in attesa")),
             "enabled": _job_enabled(job.id),
             "managed": job.id in MANAGED_WATCHTOWER_JOB_IDS,
-            "editable": job.id in EDITABLE_MANAGED_JOB_IDS,
+            # A paused job remains editable: pausing before changing a timer
+            # is the normal safe operating procedure.
+            "editable": getattr(job, "func", None) is not mn_srv.runstrat,
             "schedule": _schedule_payload(job.id),
             "last_started_at": runtime.get("last_started_at"),
             "last_finished_at": runtime.get("last_finished_at"),
@@ -555,11 +554,11 @@ def run_job(job_id):
 def update_job():
     payload = request.get_json(silent=True) or {}
     job_id = payload.get('id')
-    if job_id not in EDITABLE_MANAGED_JOB_IDS:
-        return jsonify({'message': 'Sono modificabili solo le attività Watchtower/manutenzione.'}), 403
     job = scheduler.get_job(job_id)
     if not job:
         return jsonify({'message': 'Job non trovato'}), 404
+    if getattr(job, "func", None) is mn_srv.runstrat:
+        return jsonify({'message': 'Le strategie che inviano ordini restano gestite da cron.'}), 403
     schedule, error = _validate_schedule_payload(payload.get('schedule'))
     if error:
         return jsonify({'message': error}), 400
