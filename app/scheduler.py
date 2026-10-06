@@ -1,6 +1,7 @@
 
 import logging
 import os
+import sys
 import shutil
 import threading
 import traceback
@@ -19,6 +20,7 @@ from datetime import datetime
 import app.tickers as tk_srv
 import app.service.main_service as mn_srv
 import app.service.profile_baseline_drift_service as baseline_drift_srv
+import app.service.watchtower_scheduler_service as watchtower_scheduler_srv
 import json
 from datetime import datetime, timedelta
 from app.service.EventEmitter import EventEmitter
@@ -105,6 +107,12 @@ scheduler = BackgroundScheduler(executors=executors)
 scheduler.start(paused=True)
 
 IMMEDIATE="_immediate"
+MANAGED_WATCHTOWER_JOB_IDS = {
+    "Watchtower — poll Alpaca",
+    "Watchtower — watchdog profili",
+    "Watchtower — replay riconciliazioni",
+    "Controllo drift baseline profili",
+}
 
 # Schedula il job di caricamento ticker
 #scheduler.add_job(tk_srv.init_tickers(), 'interval', hours=24, start_date=datetime.now() + timedelta(seconds=10), 
@@ -115,6 +123,21 @@ IMMEDIATE="_immediate"
 _restore_job_state(scheduler.add_job(
     tk_srv.init_tickers, CronTrigger(hour='20', minute=0), id='Aggiorna ALLMIB',
     replace_existing=True, max_instances=1, kwargs={"list_name":"allmib"},
+))
+_restore_job_state(scheduler.add_job(
+    watchtower_scheduler_srv.poll_alpaca_orders,
+    CronTrigger(hour=16, minute=5), id="Watchtower — poll Alpaca",
+    replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=86400,
+))
+_restore_job_state(scheduler.add_job(
+    watchtower_scheduler_srv.detect_missed_scheduled_runs,
+    CronTrigger(hour=16, minute=10), id="Watchtower — watchdog profili",
+    replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=86400,
+))
+_restore_job_state(scheduler.add_job(
+    watchtower_scheduler_srv.replay_reconciliation_catchup,
+    CronTrigger(hour=16, minute=15), id="Watchtower — replay riconciliazioni",
+    replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=86400,
 ))
 _restore_job_state(scheduler.add_job(
     baseline_drift_srv.run_profile_baseline_drift,
@@ -178,9 +201,27 @@ def load_jobs(data=None):
     #return jsonify("ok")
 
 
-load_jobs()
+# Strategy execution is owned by OS cron.  Do not load legacy JSON jobs that
+# call main_service.runstrat into this process.
 if _load_scheduler_state()["scheduler_enabled"]:
     scheduler.resume()
+
+    # Every Watchtower worker is idempotent and has its own lookback/catch-up.
+    # Queue an immediate recovery pass after an API restart, preserving their
+    # dependency order (poll -> watchdog -> replay) with one shared executor.
+    if os.environ.get("BT_SCHEDULER_STARTUP_CATCHUP", "1") == "1" and "pytest" not in sys.modules:
+        recovery_order = [
+            "Watchtower — poll Alpaca", "Watchtower — watchdog profili", "Watchtower — replay riconciliazioni",
+            "Controllo drift baseline profili",
+        ]
+        # Other registered maintenance jobs (ticker refreshes) are also
+        # refreshed once after a restart. Strategy jobs are never loaded here.
+        recovery_order.extend(job.id for job in scheduler.get_jobs() if job.id not in recovery_order)
+        for index, job_id in enumerate(recovery_order):
+            job = scheduler.get_job(job_id)
+            if job and _job_enabled(job_id):
+                scheduler.add_job(job.func, DateTrigger(run_date=datetime.now() + timedelta(seconds=index * 2)),
+                                  id=f"{job_id}{IMMEDIATE}", replace_existing=True, max_instances=1)
 logger.info("---Avvio schedulazioni")
 
 
@@ -339,6 +380,7 @@ def list_jobs():
             'args': str(job.args),
             "status": job_event_cache.get(job.id, "NA"),
             "enabled": _job_enabled(job.id),
+            "managed": job.id in MANAGED_WATCHTOWER_JOB_IDS,
         }
         jobs_list.append(job_info)
     
@@ -376,6 +418,8 @@ def pause_job(job_id):
 
 @sc_bp.route('/delete_job/<job_id>', methods=['POST'])
 def delete_job(job_id):
+    if job_id in MANAGED_WATCHTOWER_JOB_IDS:
+        return jsonify({'message': 'Managed Watchtower jobs cannot be deleted; disable them instead.'}), 400
     job = scheduler.get_job(job_id)
     if job:
         scheduler.remove_job(job_id)
@@ -422,6 +466,8 @@ def run_job(job_id):
 @sc_bp.route('/update_job', methods=['POST'])
 def update_job():
     id = request.get_json().get('id')
+    if id in MANAGED_WATCHTOWER_JOB_IDS:
+        return jsonify({'message': 'Managed Watchtower schedules have fixed safe timing.'}), 400
     name = request.get_json().get('name')
     destination_path = os.path.join(SCHEDULE_PATH, f"{name}.json")
     if id != name:

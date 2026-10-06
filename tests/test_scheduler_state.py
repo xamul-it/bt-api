@@ -77,3 +77,18 @@ def test_hourly_profile_baseline_drift_job_is_registered():
     assert job is not None
     assert "minute='0'" in str(job.trigger)
     assert job.max_instances == 1
+
+
+def test_watchtower_recovery_jobs_are_registered_and_never_call_runstrat():
+    import app.scheduler as scheduler_module
+
+    expected = {
+        "Watchtower — poll Alpaca",
+        "Watchtower — watchdog profili",
+        "Watchtower — replay riconciliazioni",
+    }
+    for job_id in expected:
+        job = scheduler_module.scheduler.get_job(job_id)
+        assert job is not None
+        assert "runstrat" not in getattr(job.func, "__name__", "")
+        assert job.max_instances == 1

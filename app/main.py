@@ -96,6 +96,9 @@ def schedule():
 
 @mn.route('/pin-switch', methods=['POST'])
 def pin_switch():
+    return jsonify({
+        'error': 'Strategy execution schedules are managed exclusively by cron; Scheduler is Watchtower-only.'
+    }), 403
     id = request.get_json().get('id')
     r = srv.runs[id]
     strategy = r["args"]["strategia"]["value"]
