@@ -131,6 +131,7 @@ MANAGED_WATCHTOWER_JOB_IDS = {
     "Watchtower — poll Alpaca",
     "Watchtower — watchdog profili",
     "Watchtower — replay riconciliazioni",
+    "Watchtower — refresh Yahoo",
     "Controllo drift baseline profili",
 }
 
@@ -140,6 +141,7 @@ DEFAULT_JOB_SCHEDULES = {
     "Watchtower — poll Alpaca": {"frequency": "daily", "hour": 16, "minute": 5},
     "Watchtower — watchdog profili": {"frequency": "daily", "hour": 16, "minute": 10},
     "Watchtower — replay riconciliazioni": {"frequency": "daily", "hour": 16, "minute": 15},
+    "Watchtower — refresh Yahoo": {"frequency": "daily", "hour": 15, "minute": 37},
     "Controllo drift baseline profili": {"frequency": "hourly", "hour": 0, "minute": 0},
     "Aggiorna ALLMIB": {"frequency": "daily", "hour": 20, "minute": 0},
     "Aggiorna NASDAQ 100": {"frequency": "daily", "hour": 20, "minute": 0},
@@ -230,6 +232,11 @@ _restore_job_state(scheduler.add_job(
 _restore_job_state(scheduler.add_job(
     watchtower_scheduler_srv.detect_missed_scheduled_runs,
     _managed_trigger("Watchtower — watchdog profili", CronTrigger(hour=16, minute=10)), id="Watchtower — watchdog profili",
+    replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=86400,
+))
+_restore_job_state(scheduler.add_job(
+    watchtower_scheduler_srv.refresh_yahoo_data_for_reconciliation,
+    _managed_trigger("Watchtower — refresh Yahoo", CronTrigger(hour=15, minute=37)), id="Watchtower — refresh Yahoo",
     replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=86400,
 ))
 _restore_job_state(scheduler.add_job(

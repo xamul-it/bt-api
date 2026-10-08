@@ -98,6 +98,7 @@ def test_watchtower_recovery_jobs_are_registered_and_never_call_runstrat():
         "Watchtower — poll Alpaca",
         "Watchtower — watchdog profili",
         "Watchtower — replay riconciliazioni",
+        "Watchtower — refresh Yahoo",
     }
     for job_id in expected:
         job = scheduler_module.scheduler.get_job(job_id)

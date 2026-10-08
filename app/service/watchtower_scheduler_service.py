@@ -65,3 +65,20 @@ def detect_missed_scheduled_runs() -> dict:
 def replay_reconciliation_catchup() -> dict:
     """Replay all closed pending days; this never accesses the trading API."""
     return _run("watchtower_replay_reconcile.py", "--catch-up")
+
+
+def refresh_yahoo_data_for_reconciliation() -> dict:
+    """Refresh Yahoo data through today for the post-OPG reporting pipeline."""
+    command = ["bash", str(WORKSPACE_ROOT / "scripts" / "refresh-scheduled-daily-data.sh")]
+    env = os.environ.copy()
+    with _maintenance_lock():
+        completed = subprocess.run(
+            command, cwd=WORKSPACE_ROOT, env=env, text=True, capture_output=True, check=False,
+            timeout=int(os.environ.get("BT_WATCHTOWER_JOB_TIMEOUT_SECONDS", "1800")),
+        )
+    if completed.returncode:
+        raise RuntimeError(
+            f"refresh-scheduled-daily-data.sh exited {completed.returncode}: "
+            f"{(completed.stderr or completed.stdout)[-2000:]}"
+        )
+    return {"script": "refresh-scheduled-daily-data.sh", "output": completed.stdout[-2000:]}
