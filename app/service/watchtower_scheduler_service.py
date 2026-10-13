@@ -63,8 +63,8 @@ def detect_missed_scheduled_runs() -> dict:
 
 
 def replay_reconciliation_catchup() -> dict:
-    """Replay all closed pending days; this never accesses the trading API."""
-    return _run("watchtower_replay_reconcile.py", "--catch-up")
+    """Complete pending Backtest exits from local data, independently of Alpaca."""
+    return _run("watchtower_replay_reconcile.py", "--catch-up", "--settle-only")
 
 
 def refresh_yahoo_data_for_reconciliation() -> dict:

@@ -82,6 +82,17 @@ def test_pause_and_resume_routes_persist_job_state(monkeypatch, tmp_path):
     assert scheduler_module._job_enabled("drift") is True
 
 
+def test_evening_alpaca_poll_keeps_the_existing_poll_and_runs_at_2205():
+    import app.scheduler as scheduler_module
+
+    assert scheduler_module.scheduler.get_job("Watchtower — poll Alpaca") is not None
+    job = scheduler_module.scheduler.get_job("Watchtower — poll Alpaca serale")
+    assert job.func is scheduler_module.watchtower_scheduler_srv.poll_alpaca_orders
+    assert "hour='22', minute='5'" in str(job.trigger)
+    assert str(job.trigger.timezone) == "Europe/Rome"
+    assert job.id in scheduler_module.MANAGED_WATCHTOWER_JOB_IDS
+
+
 def test_hourly_profile_baseline_drift_job_is_registered():
     import app.scheduler as scheduler_module
 

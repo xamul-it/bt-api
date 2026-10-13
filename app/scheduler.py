@@ -108,7 +108,7 @@ def _set_job_runtime(job_id, status, error=None, output=None):
 
 
 def _restore_job_state(job):
-    if not _job_enabled(job.id):
+    if not _job_enabled(job.id) or _load_scheduler_state()["jobs"].get(job.id, {}).get("after_job"):
         job.pause()
     return job
 
@@ -129,6 +129,7 @@ scheduler.start(paused=True)
 IMMEDIATE="_immediate"
 MANAGED_WATCHTOWER_JOB_IDS = {
     "Watchtower — poll Alpaca",
+    "Watchtower — poll Alpaca serale",
     "Watchtower — watchdog profili",
     "Watchtower — replay riconciliazioni",
     "Watchtower — refresh Yahoo",
@@ -139,6 +140,7 @@ MANAGED_WATCHTOWER_JOB_IDS = {
 # always pre-filled with the schedule that is currently in force.
 DEFAULT_JOB_SCHEDULES = {
     "Watchtower — poll Alpaca": {"frequency": "daily", "hour": 16, "minute": 5},
+    "Watchtower — poll Alpaca serale": {"frequency": "daily", "hour": 22, "minute": 5},
     "Watchtower — watchdog profili": {"frequency": "daily", "hour": 16, "minute": 10},
     "Watchtower — replay riconciliazioni": {"frequency": "daily", "hour": 16, "minute": 15},
     "Watchtower — refresh Yahoo": {"frequency": "daily", "hour": 15, "minute": 37},
@@ -227,6 +229,12 @@ _restore_job_state(scheduler.add_job(
 _restore_job_state(scheduler.add_job(
     watchtower_scheduler_srv.poll_alpaca_orders,
     _managed_trigger("Watchtower — poll Alpaca", CronTrigger(hour=16, minute=5)), id="Watchtower — poll Alpaca",
+    replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=86400,
+))
+_restore_job_state(scheduler.add_job(
+    watchtower_scheduler_srv.poll_alpaca_orders,
+    _managed_trigger("Watchtower — poll Alpaca serale", CronTrigger(hour=22, minute=5, timezone="Europe/Rome")),
+    id="Watchtower — poll Alpaca serale",
     replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=86400,
 ))
 _restore_job_state(scheduler.add_job(
@@ -321,7 +329,7 @@ if _load_scheduler_state()["scheduler_enabled"]:
         ]
         for index, job_id in enumerate(recovery_order):
             job = scheduler.get_job(job_id)
-            if job and _job_enabled(job_id):
+            if job and _job_enabled(job_id) and not _load_scheduler_state()['jobs'].get(job_id, {}).get('after_job'):
                 scheduler.add_job(job.func, DateTrigger(run_date=datetime.now() + timedelta(seconds=index * 2)),
                                   id=f"{job_id}{IMMEDIATE}", replace_existing=True, max_instances=1)
 logger.info("---Avvio schedulazioni")
@@ -488,6 +496,7 @@ def list_jobs():
             # is the normal safe operating procedure.
             "editable": getattr(job, "func", None) is not mn_srv.runstrat,
             "schedule": _schedule_payload(job.id),
+            "after_job": runtime.get("after_job"),
             "last_started_at": runtime.get("last_started_at"),
             "last_finished_at": runtime.get("last_finished_at"),
             "last_error": runtime.get("last_error"),
@@ -548,7 +557,8 @@ def delete_job(job_id):
 def resume_job(job_id):
     job = scheduler.get_job(job_id)
     if job:
-        job.resume()
+        if not _load_scheduler_state()["jobs"].get(job_id, {}).get("after_job"):
+            job.resume()
         _set_job_enabled(job_id, True)
         return jsonify({'message': f'Job {job_id} resumed successfully'})
     return jsonify({'message': 'Job not found'}), 404
@@ -585,8 +595,25 @@ def update_job():
     schedule, error = _validate_schedule_payload(payload.get('schedule'))
     if error:
         return jsonify({'message': error}), 400
+    with _scheduler_state_lock:
+        state = _load_scheduler_state()
+        after_job = payload.get('after_job', state['jobs'].get(job_id, {}).get('after_job')) or None
+        if after_job:
+            predecessor = scheduler.get_job(after_job)
+            if not predecessor or getattr(predecessor, 'func', None) is mn_srv.runstrat:
+                return jsonify({'message': 'Predecessore non valido: scegliere un job di manutenzione.'}), 400
+            visited = {job_id}
+            cursor = after_job
+            while cursor:
+                if cursor in visited:
+                    return jsonify({'message': 'La concatenazione contiene un ciclo.'}), 400
+                visited.add(cursor)
+                cursor = state['jobs'].get(cursor, {}).get('after_job')
+        state['jobs'].setdefault(job_id, {}).update(schedule=schedule, after_job=after_job)
+        _save_scheduler_state(state)
     job.reschedule(trigger=_cron_trigger_from_payload(schedule, job.trigger))
-    _set_job_schedule(job_id, schedule)
+    if after_job or not _job_enabled(job_id):
+        job.pause()
     return jsonify({'message': 'Schedulazione aggiornata', 'schedule': schedule})
     
 
@@ -594,6 +621,25 @@ def update_job():
 # Crea un lock globale
 lock = threading.Lock()
 job_event_cache = {}
+
+
+def _launch_followers(job_id):
+    """Only successful maintenance jobs release enabled followers; no cron duplicate."""
+    if scheduler.state != STATE_RUNNING:
+        return
+    for follower_id, config in _load_scheduler_state()['jobs'].items():
+        if config.get('after_job') != job_id or config.get('enabled') is False:
+            continue
+        follower = scheduler.get_job(follower_id)
+        if not follower or follower.func is mn_srv.runstrat:
+            continue
+        immediate_id = f'{follower_id}{IMMEDIATE}'
+        if scheduler.get_job(immediate_id):
+            continue
+        scheduler.add_job(follower.func, trigger=DateTrigger(run_date=datetime.now()),
+                          args=follower.args, kwargs=follower.kwargs, id=immediate_id,
+                          max_instances=1, coalesce=True, misfire_grace_time=86400)
+
 # Listener per intercettare quando un job è completato o fallisce
 def job_listener(event):
     with lock: #devo evitare copie sovrapposte
@@ -604,6 +650,7 @@ def job_listener(event):
             result = getattr(event, 'retval', None)
             output = result.get('output') if isinstance(result, dict) else result
             _set_job_runtime(job_id, 'eseguito', output=output)
+            _launch_followers(job_id)
         elif event.code == EVENT_JOB_ERROR:
             job_event_cache[job_id] = 'errore'
             _set_job_runtime(job_id, 'errore', getattr(event, 'exception', None))
