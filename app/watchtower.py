@@ -8,7 +8,8 @@ from datetime import date
 from pathlib import Path
 from flask import Blueprint, Response, jsonify, request
 
-from app.scheduler import scheduler
+from app.scheduler import calculation_service, scheduler
+from app.service.calculation_job_service import CalculationConflict
 from app.service.main_service import repo
 from watchtower_runtime import ProfileParamsUnresolvedError, ProfileParamsIntegrityError
 import profile_baseline as _pbl
@@ -369,48 +370,7 @@ def _pbl_job_update(job_id, **updates):
 
 
 def _start_profile_baseline_job(profile, payload):
-    def _parse_date(key, required=True):
-        raw = str(payload.get(key) or "").strip()
-        if not raw:
-            if required:
-                raise ValueError(f"{key} is required")
-            return None
-        try:
-            return date.fromisoformat(raw)
-        except ValueError:
-            raise ValueError(f"{key} must be YYYY-MM-DD")
-
-    label = str(payload.get("label") or "").strip()
-    if not label:
-        raise ValueError("label is required")
-    window_start = _parse_date("window_start")
-    window_end = _parse_date("window_end")
-    if str(payload.get("as_of_date") or "").strip():
-        raise ValueError("as_of_date is no longer supported; baselines use the current configuration")
-    if window_end < window_start:
-        raise ValueError("window_end must be on or after window_start")
-
-    job_id = uuid.uuid4().hex
-    with _profile_baseline_jobs_lock:
-        _profile_baseline_jobs[job_id] = {
-            "job_id": job_id, "status": "queued", "done": False,
-            "profile": profile, "label": label, "baseline_id": None,
-            "created_at": time.time(), "updated_at": time.time(), "error": None,
-        }
-
-    def _runner():
-        _pbl_job_update(job_id, status="running")
-        try:
-            row = _pbl.compute_profile_baseline(
-                repo, profile=profile, label=label,
-                window_start=window_start, window_end=window_end,
-            )
-            _pbl_job_update(job_id, status="completed", done=True, baseline_id=row.get("id"))
-        except Exception as exc:  # noqa: BLE001
-            _pbl_job_update(job_id, status="failed", done=True, error=str(exc))
-
-    threading.Thread(target=_runner, name=f"pbl-{job_id[:8]}", daemon=True).start()
-    return _pbl_job_snapshot(job_id)
+    return calculation_service.enqueue_baseline(profile, payload)
 
 
 def _start_alpaca_sync_job(window_open, window_start, window_end, portfolio_key_id=None, chain_run_id=None):
@@ -1264,17 +1224,69 @@ def watchtower_cron_baseline_create(profile):
     payload = request.get_json(silent=True) or {}
     try:
         job = _start_profile_baseline_job(profile, payload)
+    except CalculationConflict as exc:
+        return jsonify({"error": str(exc)}), 409
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+    except Exception as exc:  # persistence/migration unavailable
+        return jsonify({"error": str(exc)}), 503
     return jsonify(job), 202
 
 
 @obs_bp.route("/watchtower/cron/baselines/jobs/<job_id>", methods=["GET"])
 def watchtower_cron_baseline_job(job_id):
-    job = _pbl_job_snapshot(job_id)
+    missing = _require_repo()
+    if missing:
+        return missing
+    try:
+        job = repo.get_calculation_job(job_id)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 503
     if not job:
         return jsonify({"error": "job not found"}), 404
+    if job.get("kind") != "baseline_build":
+        return jsonify({"error": "job not found"}), 404
+    if job.get("result", {}).get("baseline_id") and not job.get("baseline_id"):
+        job["baseline_id"] = job["result"]["baseline_id"]
     return jsonify(job)
+
+
+@obs_bp.route("/watchtower/cron/<profile>/backtest-rebuild/preview", methods=["GET"])
+def watchtower_cron_backtest_rebuild_preview(profile):
+    missing = _require_repo()
+    if missing:
+        return missing
+    try:
+        baseline_id = int(request.args.get("baseline_id"))
+        window = int(request.args.get("window", 25))
+        return jsonify(calculation_service.preview_rebuild(profile, baseline_id, window))
+    except LookupError:
+        return jsonify({"error": "baseline not found"}), 404
+    except CalculationConflict as exc:
+        return jsonify({"error": str(exc)}), 409
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@obs_bp.route("/watchtower/cron/<profile>/backtest-rebuild", methods=["POST"])
+def watchtower_cron_backtest_rebuild(profile):
+    missing = _require_repo()
+    if missing:
+        return missing
+    payload = request.get_json(silent=True) or {}
+    try:
+        job = calculation_service.enqueue_rebuild(profile, payload)
+    except LookupError:
+        return jsonify({"error": "baseline not found"}), 404
+    except CalculationConflict as exc:
+        return jsonify({"error": str(exc)}), 409
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 503
+    return jsonify(job), 202
 
 
 @obs_bp.route("/watchtower/cron/<profile>/baselines/<int:baseline_id>", methods=["DELETE"])

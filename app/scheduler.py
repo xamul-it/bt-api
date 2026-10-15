@@ -21,6 +21,10 @@ import app.tickers as tk_srv
 import app.service.main_service as mn_srv
 import app.service.profile_baseline_drift_service as baseline_drift_srv
 import app.service.watchtower_scheduler_service as watchtower_scheduler_srv
+from app.service.calculation_job_service import (
+    CALCULATION_JOB_PREFIX,
+    CalculationJobService,
+)
 import json
 from datetime import datetime, timedelta
 from app.service.EventEmitter import EventEmitter
@@ -118,6 +122,7 @@ emitter = EventEmitter()
 # Configura l'esecutore con un massimo di 2 thread (limite al parallelismo)
 executors = {
     'default': ThreadPoolExecutor(20),  # Limita a 2 job paralleli
+    'calculations': ThreadPoolExecutor(1),
     #'processpool': ProcessPoolExecutor(1)  # Limita ulteriormente i job pesanti
 }
 
@@ -125,6 +130,7 @@ executors = {
 scheduler = BackgroundScheduler(executors=executors)
 
 scheduler.start(paused=True)
+calculation_service = CalculationJobService(scheduler, mn_srv.repo)
 
 IMMEDIATE="_immediate"
 MANAGED_WATCHTOWER_JOB_IDS = {
@@ -332,6 +338,12 @@ if _load_scheduler_state()["scheduler_enabled"]:
             if job and _job_enabled(job_id) and not _load_scheduler_state()['jobs'].get(job_id, {}).get('after_job'):
                 scheduler.add_job(job.func, DateTrigger(run_date=datetime.now() + timedelta(seconds=index * 2)),
                                   id=f"{job_id}{IMMEDIATE}", replace_existing=True, max_instances=1)
+try:
+    calculation_service.configure_recovery()
+except Exception:
+    # A missing migration/DB must not prevent the API and recurring maintenance
+    # from starting. Calculation endpoints will surface persistence as 503.
+    logger.exception("Persistent calculation recovery unavailable")
 logger.info("---Avvio schedulazioni")
 
 
@@ -475,7 +487,7 @@ def index():
 # Definisci la route per ottenere l'elenco dei job
 @sc_bp.route('/jobs')
 def list_jobs():
-    jobs = scheduler.get_jobs()
+    jobs = [job for job in scheduler.get_jobs() if not str(job.id).startswith(CALCULATION_JOB_PREFIX)]
     jobs_list = []
     for job in jobs:
         try:
@@ -506,6 +518,46 @@ def list_jobs():
     
     return jsonify(jobs_list)
 
+
+@sc_bp.route('/calculations')
+def list_calculations():
+    if not mn_srv.repo.available():
+        return jsonify({'error': 'Postgres DSN not configured'}), 503
+    profile = str(request.args.get('profile') or '').strip() or None
+    try:
+        limit = max(1, min(200, int(request.args.get('limit', 50))))
+        return jsonify(mn_srv.repo.list_calculation_jobs(profile=profile, limit=limit))
+    except Exception as exc:
+        logger.exception("Calculation history unavailable")
+        return jsonify({'error': str(exc)}), 503
+
+
+@sc_bp.route('/calculations/<job_id>')
+def calculation_detail(job_id):
+    if not mn_srv.repo.available():
+        return jsonify({'error': 'Postgres DSN not configured'}), 503
+    try:
+        row = mn_srv.repo.get_calculation_job(job_id)
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 503
+    if not row:
+        return jsonify({'error': 'job not found'}), 404
+    return jsonify(row)
+
+
+@sc_bp.route('/calculations/<job_id>/log')
+def calculation_log(job_id):
+    if not mn_srv.repo.available():
+        return jsonify({'error': 'Postgres DSN not configured'}), 503
+    try:
+        limit = max(1, min(50000, int(request.args.get('limit', 8000))))
+        row = mn_srv.repo.get_calculation_job(job_id)
+        if not row:
+            return jsonify({'error': 'job not found'}), 404
+        return jsonify({'job_id': job_id, 'output': calculation_service.read_log(job_id, limit=limit)})
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 503
+
 @sc_bp.route('/status')
 def scheduler_status():
     if scheduler.state == STATE_RUNNING:
@@ -529,6 +581,8 @@ def start_scheduler():
 
 @sc_bp.route('/pause_job/<job_id>', methods=['POST'])
 def pause_job(job_id):
+    if str(job_id).startswith(CALCULATION_JOB_PREFIX):
+        return jsonify({'message': 'Le esecuzioni persistenti non supportano pausa/ripresa.'}), 400
     job = scheduler.get_job(job_id)
     if job:
         job.pause()
@@ -555,6 +609,8 @@ def delete_job(job_id):
 
 @sc_bp.route('/resume_job/<job_id>', methods=['POST'])
 def resume_job(job_id):
+    if str(job_id).startswith(CALCULATION_JOB_PREFIX):
+        return jsonify({'message': 'Le esecuzioni persistenti non supportano pausa/ripresa.'}), 400
     job = scheduler.get_job(job_id)
     if job:
         if not _load_scheduler_state()["jobs"].get(job_id, {}).get("after_job"):
@@ -565,6 +621,8 @@ def resume_job(job_id):
 
 @sc_bp.route('/run_job/<job_id>', methods=['POST'])
 def run_job(job_id):
+    if str(job_id).startswith(CALCULATION_JOB_PREFIX):
+        return jsonify({'message': 'Le esecuzioni persistenti partono solo dalla richiesta confermata.'}), 400
     job = scheduler.get_job(job_id)
     if job:
 
@@ -642,6 +700,10 @@ def _launch_followers(job_id):
 
 # Listener per intercettare quando un job è completato o fallisce
 def job_listener(event):
+    if str(event.job_id).startswith(CALCULATION_JOB_PREFIX):
+        # Persistent calculations keep their own lifecycle/output and must
+        # never enter recurring-job state or artifact move logic.
+        return
     with lock: #devo evitare copie sovrapposte
         logger.info(f"Event for {event.job_id} - {event.code}")
         job_id = _base_job_id(event.job_id)
