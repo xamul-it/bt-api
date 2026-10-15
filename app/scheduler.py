@@ -131,6 +131,8 @@ scheduler = BackgroundScheduler(executors=executors)
 
 scheduler.start(paused=True)
 calculation_service = CalculationJobService(scheduler, mn_srv.repo)
+from app.service.simulation_service import SimulationService
+simulation_service = SimulationService(calculation_service, scheduler, mn_srv.repo)
 
 IMMEDIATE="_immediate"
 MANAGED_WATCHTOWER_JOB_IDS = {
@@ -345,6 +347,10 @@ except Exception:
     # from starting. Calculation endpoints will surface persistence as 503.
     logger.exception("Persistent calculation recovery unavailable")
 logger.info("---Avvio schedulazioni")
+try:
+    simulation_service.restore_schedules()
+except Exception:
+    logger.exception('Simulation schedules could not be restored')
 
 
 def save_jobs_to_json():

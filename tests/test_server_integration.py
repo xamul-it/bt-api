@@ -20,6 +20,14 @@ def test_dyn_route_blocked_without_session(client):
     assert r.get_json() == {"error": "auth required"}
 
 
+def test_simulations_and_reports_require_authenticated_session(client):
+    client.post('/auth/logout')
+    for path in ('/dyn/simulations/catalog', '/dyn/simulations/jobs',
+                 '/dyn/simulations/jobs/fake/artifacts/stats.html'):
+        assert client.get(path).status_code == 401
+    assert client.post('/dyn/simulations/jobs', json={'mode':'live'}).status_code == 401
+
+
 def test_dyn_route_reachable_after_login(client):
     r = client.post("/auth/login", json={"password": "testpw"})
     assert r.status_code == 200

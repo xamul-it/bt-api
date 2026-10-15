@@ -10,3 +10,4 @@ out/
 .htaccess
 config/alpaca_cache/
 config/scheduler-state.json
+config/backtesting/

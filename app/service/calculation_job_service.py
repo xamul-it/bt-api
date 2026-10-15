@@ -22,7 +22,7 @@ from run_provenance import PROVENANCE_SCHEMA_VERSION, _artifact_manifest, git_pr
 
 
 CALCULATION_JOB_PREFIX = "calculation:"
-ALLOWED_KINDS = {"baseline_build", "backtest_rebuild"}
+ALLOWED_KINDS = {"baseline_build", "backtest_rebuild", "simulation", "market_data_refresh"}
 ACTIVE_STATUSES = ("queued", "running")
 WORKSPACE_ROOT = Path(os.environ.get("BT_WORKSPACE_ROOT", Path(__file__).resolve().parents[3])).resolve()
 CORE_PYTHON = Path(os.environ.get("BT_CORE_PYTHON", WORKSPACE_ROOT / "bt-core" / ".venv" / "bin" / "python"))
