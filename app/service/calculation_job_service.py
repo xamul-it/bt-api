@@ -250,6 +250,13 @@ class CalculationJobService:
             with self._configure_lock:
                 self._configured = False
             raise
+        # Recovery cannot be startup-only: a worker that survived the API
+        # restart can still die afterwards without an owner to reap it.
+        self.scheduler.add_job(
+            self.reconcile_running_jobs, 'interval', seconds=30,
+            id=f'{CALCULATION_JOB_PREFIX}recovery', executor='default',
+            replace_existing=True, max_instances=1, coalesce=True,
+        )
         for row in reversed(active):
             if row["status"] == "queued":
                 self._schedule(row["id"])
@@ -258,24 +265,17 @@ class CalculationJobService:
                 continue
             self.repo.interrupt_calculation_job(row["id"], "worker_abandoned_during_api_restart")
 
+    def reconcile_running_jobs(self) -> None:
+        for row in self.repo.list_calculation_jobs(limit=200, statuses=("running",)):
+            if not self._running_job_is_alive(row):
+                self.repo.interrupt_calculation_job(row["id"], "worker_abandoned")
+
     def _running_job_is_alive(self, row: dict[str, Any]) -> bool:
-        heartbeat = row.get("heartbeat_at")
-        if heartbeat:
-            try:
-                age = time.time() - datetime.fromisoformat(heartbeat.replace("Z", "+00:00")).timestamp()
-                if age <= int(os.environ.get("BT_CALCULATION_STALE_SECONDS", "90")):
-                    return True
-            except ValueError:
-                pass
-        pid = row.get("worker_pid")
-        if pid:
-            try:
-                os.kill(int(pid), 0)
-                return True
-            except (OSError, ValueError):
-                pass
-        # A live worker inherited this lock descriptor even if the API owner died.
-        handle = self._try_lock(LOCK_DIR / "global.lock")
+        # The runner acquires this before claiming the DB row and passes it
+        # to the child. The OS releases it when the last owner exits. A recent
+        # heartbeat or reused PID cannot establish that this worker is alive;
+        # the global lock may also belong to a different profile entirely.
+        handle = self._try_lock(LOCK_DIR / f"profile-{_safe_profile_name(row['profile'])}.lock")
         if handle is None:
             return True
         self._unlock(handle)

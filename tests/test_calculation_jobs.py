@@ -25,8 +25,9 @@ class MemoryRepo:
             self.jobs[row["id"]] = row
             return dict(row)
 
-    def list_calculation_jobs(self, **_kwargs):
-        return list(self.jobs.values())
+    def list_calculation_jobs(self, **kwargs):
+        statuses = kwargs.get('statuses')
+        return [dict(row) for row in self.jobs.values() if not statuses or row['status'] in statuses]
 
     def get_calculation_job(self, job_id):
         row = self.jobs.get(job_id)
@@ -105,8 +106,60 @@ def test_recovery_schedules_queued_once_and_interrupts_abandoned(monkeypatch):
     monkeypatch.setattr(service, "_running_job_is_alive", lambda row: row["id"] != "dead")
     service.configure_recovery()
     service.configure_recovery()
-    assert [call[1]["id"] for call in scheduler.calls] == ["calculation:queued"]
+    assert [call[1]["id"] for call in scheduler.calls] == ["calculation:recovery", "calculation:queued"]
     assert repo.interrupted == ["dead"]
+
+
+def test_restart_interrupts_dead_worker_despite_recent_heartbeat_and_existing_pid(tmp_path, monkeypatch):
+    import os
+    from app.service import calculation_job_service as calc
+
+    monkeypatch.setattr(calc, 'LOCK_DIR', tmp_path)
+    repo, scheduler = MemoryRepo(), FakeScheduler()
+    repo.jobs['dead'] = {
+        'id': 'dead', 'profile': 'development', 'status': 'running',
+        'worker_pid': os.getpid(),  # An existing unrelated/reused PID is insufficient.
+        'heartbeat_at': datetime.now(timezone.utc).isoformat(),
+    }
+    service = calc.CalculationJobService(scheduler, repo)
+    # An unrelated calculation's global lock must not preserve this dead job.
+    global_lock = service._try_lock(tmp_path / 'global.lock')
+    other_lock = service._try_lock(tmp_path / 'profile-mirror.lock')
+    try:
+        service.configure_recovery()
+        assert repo.jobs['dead']['status'] == 'interrupted'
+        assert repo.interrupted == ['dead']
+    finally:
+        service._unlock(other_lock)
+        service._unlock(global_lock)
+
+
+def test_live_worker_survives_restart_and_is_reconciled_after_later_death(tmp_path, monkeypatch):
+    from app.service import calculation_job_service as calc
+
+    monkeypatch.setattr(calc, 'LOCK_DIR', tmp_path)
+    repo, scheduler = MemoryRepo(), FakeScheduler()
+    repo.jobs['live'] = {
+        'id': 'live', 'profile': 'development', 'status': 'running',
+        'worker_pid': 99999999,
+        'heartbeat_at': (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+    }
+    service = calc.CalculationJobService(scheduler, repo)
+    profile_lock = service._try_lock(tmp_path / 'profile-development.lock')
+    try:
+        service.configure_recovery()
+        assert repo.jobs['live']['status'] == 'running'
+        recovery_call = next(call for call in scheduler.calls if call[1]['id'] == 'calculation:recovery')
+        assert recovery_call[1]['executor'] == 'default'
+        recovery_call[0][0]()
+        assert not repo.interrupted
+    finally:
+        service._unlock(profile_lock)
+    recovery_call[0][0]()
+    assert repo.jobs['live']['status'] == 'interrupted'
+    recovery_call[0][0]()
+    assert repo.interrupted == ['live']
+    assert not any(call[1]['id'] == 'calculation:live' for call in scheduler.calls)
 
 
 def test_rebuild_contract_confirmation_cross_profile_and_collision(monkeypatch):
