@@ -2,6 +2,39 @@ from flask import Flask
 import pytest
 
 
+def test_baseline_report_is_bound_to_profile_and_recorded_run(monkeypatch, tmp_path):
+    import app.watchtower as watchtower
+
+    baseline = {'id': 108, 'profile': 'challenger',
+                'strategy': 'overnight_ah_flat_composite.OvernightAHFlatComposite',
+                'run_id': 'baseline_challenger_test'}
+
+    class Repo:
+        def available(self): return True
+        def get_profile_baseline(self, baseline_id):
+            return baseline if baseline_id == 108 else None
+
+    monkeypatch.setattr(watchtower, 'repo', Repo())
+    monkeypatch.setattr(watchtower._pbl, 'BT_CORE', tmp_path)
+    report = tmp_path / 'out/overnight_ah_flat_composite/OvernightAHFlatComposite/baseline_challenger_test/stats.html'
+    report.parent.mkdir(parents=True)
+    report.write_text('<html>saved report</html>')
+    app = Flask(__name__)
+    app.register_blueprint(watchtower.obs_bp, url_prefix='/dyn/obs')
+    client = app.test_client()
+    route = '/dyn/obs/watchtower/cron/challenger/baselines/108/stats.html'
+    response = client.get(route)
+    assert response.status_code == 200
+    assert b'saved report' in response.data
+    assert response.mimetype == 'text/html'
+    assert client.get(route.replace('challenger/', 'development/')).status_code == 404
+    assert client.get(route.replace('/108/', '/999/')).status_code == 404
+    baseline['run_id'] = '../outside'
+    assert client.get(route).status_code == 404
+    baseline['run_id'] = 'missing_report'
+    assert client.get(route).status_code == 404
+
+
 def test_baseline_list_marks_newest_compatible_default(monkeypatch):
     import app.watchtower as watchtower
 

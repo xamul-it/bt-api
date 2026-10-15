@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import subprocess
 import threading
@@ -6,7 +7,7 @@ import time
 import uuid
 from datetime import date
 from pathlib import Path
-from flask import Blueprint, Response, jsonify, request
+from flask import Blueprint, Response, jsonify, request, send_file
 
 from app.scheduler import calculation_service, scheduler
 from app.service.calculation_job_service import CalculationConflict
@@ -1231,6 +1232,28 @@ def watchtower_cron_baseline_create(profile):
     except Exception as exc:  # persistence/migration unavailable
         return jsonify({"error": str(exc)}), 503
     return jsonify(job), 202
+
+
+@obs_bp.route("/watchtower/cron/<profile>/baselines/<int:baseline_id>/stats.html", methods=["GET"])
+def watchtower_cron_baseline_stats(profile, baseline_id):
+    missing = _require_repo()
+    if missing:
+        return missing
+    baseline = repo.get_profile_baseline(baseline_id)
+    if not baseline or baseline.get("profile") != profile:
+        return jsonify({"error": "baseline not found"}), 404
+    strategy = str(baseline.get("strategy") or "").split(".")
+    run_id = str(baseline.get("run_id") or "")
+    if (len(strategy) != 2 or not all(re.fullmatch(r"[A-Za-z0-9_]+", part) for part in strategy)
+            or not re.fullmatch(r"[A-Za-z0-9_-]+", run_id)):
+        return jsonify({"error": "baseline run identity unavailable"}), 404
+    # All scheduled checkouts publish into the shared output archive. Resolve
+    # only the recorded run identity; never accept arbitrary paths from clients.
+    output_root = (_pbl.BT_CORE / "out").resolve()
+    report = (output_root / strategy[0].lower() / strategy[1] / run_id / "stats.html").resolve()
+    if not report.is_relative_to(output_root) or not report.is_file():
+        return jsonify({"error": "stats.html not available for this run"}), 404
+    return send_file(report, mimetype="text/html", conditional=True)
 
 
 @obs_bp.route("/watchtower/cron/baselines/jobs/<job_id>", methods=["GET"])
