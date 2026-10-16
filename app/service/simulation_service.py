@@ -255,7 +255,14 @@ class SimulationService:
             snapshot=dict(kind='market_data_refresh', profile='historical-data-refresh', configuration=config))
 
     def schedules(self):
-        return list(metadata().get('schedules', {}).values())
+        rows = []
+        for stored in metadata().get('schedules', {}).values():
+            row = dict(stored)
+            job = self.scheduler.get_job('calculation:simulation-schedule:' + row['id'])
+            next_run = getattr(job, 'next_run_time', None) if job else None
+            row['next_run_at'] = next_run.isoformat() if next_run else None
+            rows.append(row)
+        return sorted(rows, key=lambda row: (str(row.get('label') or '').casefold(), row['id']))
 
     def install_schedule(self, row):
         identity = 'calculation:simulation-schedule:' + row['id']
@@ -276,10 +283,35 @@ class SimulationService:
         enabled = payload.get('enabled', True)
         if not isinstance(enabled, bool):
             raise ValueError('enabled deve essere booleano')
-        row = dict(id=schedule_id or uuid.uuid4().hex, label=str(payload.get('label') or config['label'])[:160],
+        state = metadata()
+        previous = state.get('schedules', {}).get(schedule_id, {}) if schedule_id else {}
+        label = str(payload.get('label') or config['label']).strip()[:160]
+        if not label:
+            raise ValueError('Nome pianificazione obbligatorio')
+        group_key = ' '.join(label.split()).casefold()
+        if not schedule_id:
+            duplicate = next((item for item in state.get('schedules', {}).values()
+                              if item.get('group_key') == group_key or
+                              ' '.join(str(item.get('label') or '').split()).casefold() == group_key), None)
+            if duplicate:
+                raise ValueError(f'Pianificazione già presente per questo titolo:{duplicate["id"]}')
+        source_job_id = str(payload.get('source_job_id') or previous.get('source_job_id') or '').strip() or None
+        if source_job_id and not previous:
+            source = self.job(source_job_id)
+            if source.get('kind') != 'simulation' or source.get('status') != 'completed':
+                raise ValueError('È possibile pianificare soltanto un backtest completato')
+        # The title is the dashboard identity. Scheduled executions keep the
+        # original start date and advance only the inclusive end date.
+        config['label'] = label
+        now = datetime.now(timezone.utc).isoformat()
+        row = dict(id=schedule_id or uuid.uuid4().hex, label=label,
                    configuration=config, hour=int(hour), minute=int(minute), enabled=enabled,
                    rolling_days=max(1,(date.fromisoformat(config['todate'])-date.fromisoformat(config['fromdate'])).days),
-                   timezone='Europe/Rome')
+                   group_key=group_key, source_job_id=source_job_id,
+                   timezone='Europe/Rome', created_at=previous.get('created_at') or now, updated_at=now)
+        for key in ('last_job_id', 'last_error', 'last_triggered_at'):
+            if previous.get(key) is not None:
+                row[key] = previous[key]
         with registry() as state:
             state.setdefault('schedules', {})[row['id']] = row
         self.install_schedule(row)
@@ -290,7 +322,8 @@ class SimulationService:
         if not row or not row['enabled']:
             return
         config = dict(row['configuration'])
-        config.update(todate=str(date.today()), fromdate=str(date.today()-timedelta(days=row['rolling_days'])))
+        today = datetime.now(ZoneInfo('Europe/Rome')).date().isoformat()
+        config.update(todate=today, label=row['label'])
         try:
             job = self.submit(config, schedule_id=schedule_id)
             output = dict(last_job_id=job['id'], last_error=None)
@@ -300,6 +333,16 @@ class SimulationService:
             target = state.get('schedules', {}).get(schedule_id)
             if target:
                 target.update(output, last_triggered_at=datetime.now(timezone.utc).isoformat())
+
+    def delete_schedule(self, schedule_id):
+        identity = 'calculation:simulation-schedule:' + schedule_id
+        if self.scheduler.get_job(identity):
+            self.scheduler.remove_job(identity)
+        with registry() as state:
+            removed = state.setdefault('schedules', {}).pop(schedule_id, None)
+        if not removed:
+            raise LookupError('Pianificazione non trovata')
+        return {'deleted': True, 'id': schedule_id}
 
     def restore_schedules(self):
         for row in self.schedules():

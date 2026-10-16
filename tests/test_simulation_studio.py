@@ -52,6 +52,59 @@ def test_daily_simulation_schedule_survives_reload_and_can_be_disabled(isolated,
     assert not scheduler.jobs
 
 
+def test_scheduled_simulation_keeps_start_date_and_moves_only_end_to_today(isolated, monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    srv, studio = isolated
+    monkeypatch.setattr(studio, 'configuration', lambda payload: dict(payload))
+
+    class Scheduler:
+        def __init__(self): self.jobs = {}
+        def get_job(self, identity): return self.jobs.get(identity)
+        def remove_job(self, identity): self.jobs.pop(identity)
+        def add_job(self, fn, trigger, **kwargs): self.jobs[kwargs['id']] = (fn, trigger, kwargs)
+
+    service = srv.SimulationService(None, Scheduler(), None)
+    row = service.save_schedule(dict(
+        label='challenger', hour=21, minute=15,
+        configuration=dict(label='challenger', fromdate='2000-01-01', todate='2026-01-01'),
+    ))
+    captured = {}
+    monkeypatch.setattr(service, 'submit', lambda config, schedule_id=None: captured.update(
+        configuration=config, schedule_id=schedule_id,
+    ) or {'id': 'replacement-run'})
+
+    service.run_schedule(row['id'])
+
+    assert captured['configuration']['fromdate'] == '2000-01-01'
+    assert captured['configuration']['todate'] == datetime.now(ZoneInfo('Europe/Rome')).date().isoformat()
+    assert captured['configuration']['label'] == 'challenger'
+    assert captured['schedule_id'] == row['id']
+    refreshed = service.schedules()[0]
+    assert refreshed['last_job_id'] == 'replacement-run'
+
+
+def test_simulation_schedule_can_be_deleted(isolated, monkeypatch):
+    srv, studio = isolated
+    monkeypatch.setattr(studio, 'configuration', lambda payload: dict(payload))
+
+    class Scheduler:
+        def __init__(self): self.jobs = {}
+        def get_job(self, identity): return self.jobs.get(identity)
+        def remove_job(self, identity): self.jobs.pop(identity)
+        def add_job(self, fn, trigger, **kwargs): self.jobs[kwargs['id']] = (fn, trigger, kwargs)
+
+    scheduler = Scheduler()
+    service = srv.SimulationService(None, scheduler, None)
+    row = service.save_schedule(dict(
+        label='challenger', hour=21, minute=15,
+        configuration=dict(label='challenger', fromdate='2000-01-01', todate='2026-01-01'),
+    ))
+    assert service.delete_schedule(row['id'])['deleted'] is True
+    assert service.schedules() == []
+    assert scheduler.jobs == {}
+
+
 def test_http_rejects_non_backtest_mode_before_queueing(monkeypatch):
     import app.simulations as views
     class Service:

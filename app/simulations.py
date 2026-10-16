@@ -251,3 +251,8 @@ def schedule_update(schedule_id):
     if set(patch) - {'enabled', 'hour', 'minute', 'label'}:
         raise ValueError('Campo pianificazione non modificabile')
     return jsonify(service.save_schedule({**row, **patch}, schedule_id))
+
+
+@sim_bp.delete('/schedules/<schedule_id>')
+def schedule_delete(schedule_id):
+    return jsonify(service.delete_schedule(schedule_id))
