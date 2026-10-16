@@ -92,6 +92,26 @@ def test_active_profile_collision_and_atomic_claim(tmp_path, monkeypatch):
     assert scheduler.calls[0][1]["executor"] == "calculations"
 
 
+def test_duplicate_baseline_label_is_rejected_before_backtest(monkeypatch):
+    from app.service import calculation_job_service as calc
+
+    class Repo:
+        def list_profile_baselines(self, profile):
+            assert profile == "live"
+            return [{"label": "2026-10-13"}]
+
+    service = calc.CalculationJobService(FakeScheduler(), Repo())
+    monkeypatch.setattr(
+        calc.pbl, "load_profile_env",
+        lambda _profile: (_ for _ in ()).throw(AssertionError("must reject before loading the run")),
+    )
+
+    with pytest.raises(ValueError, match=r"duplicate_baseline_label:live/2026-10-13"):
+        service.baseline_snapshot("live", {
+            "label": "2026-10-13", "window_start": "2000-01-01", "window_end": "2026-01-01",
+        })
+
+
 def test_recovery_schedules_queued_once_and_interrupts_abandoned(monkeypatch):
     from app.service import calculation_job_service as calc
 

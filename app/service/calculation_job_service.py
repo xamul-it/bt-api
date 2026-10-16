@@ -117,6 +117,8 @@ class CalculationJobService:
         label = str(payload.get("label") or "").strip()
         if not label:
             raise ValueError("label is required")
+        if any(str(row.get("label") or "") == label for row in self.repo.list_profile_baselines(profile)):
+            raise ValueError(f"duplicate_baseline_label:{profile}/{label}")
         try:
             window_start = date.fromisoformat(str(payload.get("window_start") or ""))
             window_end = date.fromisoformat(str(payload.get("window_end") or ""))
