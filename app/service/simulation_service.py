@@ -8,6 +8,8 @@ import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
+from functools import lru_cache
 
 from apscheduler.triggers.cron import CronTrigger
 
@@ -16,7 +18,7 @@ from app.paths import CONFIG_PATH
 
 REGISTRY_DIR = Path(os.environ.get('BT_SIMULATION_REGISTRY', Path(CONFIG_PATH) / 'backtesting'))
 ARTIFACTS = {'stats.html', 'results.json', 'returns.csv', 'trades.json', 'orders.json',
-             'orderhistory.json', 'positions.json', 'positions.csv', 'today.json'}
+             'orderhistory.json', 'positions.json', 'positions.csv', 'today.json', 'benchmark.csv'}
 
 
 @contextmanager
@@ -41,20 +43,54 @@ def metadata():
     return json.loads(path.read_text()) if path.is_file() else {}
 
 
+@lru_cache(maxsize=256)
+def benchmark_coverage(path, mtime_ns, size):
+    import pandas as pd
+    try:
+        frame = pd.read_csv(path, usecols=[0])
+        dates = pd.to_datetime(frame.iloc[:, 0], utc=True, errors='coerce').dropna()
+        if not len(dates):
+            return dict(first_date=None, last_date=None, observations=0, coverage_error='CSV senza date valide')
+        return dict(first_date=dates.min().date().isoformat() if len(dates) else None,
+                    last_date=dates.max().date().isoformat() if len(dates) else None,
+                    observations=len(dates))
+    except (ValueError, OSError):
+        return dict(first_date=None, last_date=None, observations=0, coverage_error='Copertura CSV non leggibile')
+
+
 def benchmarks():
-    saved = metadata().get('benchmarks', {})
+    state = metadata()
+    saved = state.get('benchmarks', {})
+    definitions = state.get('benchmark_definitions', {})
     rows = []
-    for path in sorted((studio.SHARED / 'benchmark').glob('*.csv')):
-        rows.append(dict(name=path.stem, label=saved.get(path.stem, {}).get('label', path.stem),
-                         size_bytes=path.stat().st_size,
-                         updated_at=datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(),
-                         **{k:v for k,v in saved.get(path.stem, {}).items() if k != 'label'}))
+    paths = {p.stem:p for p in (studio.SHARED / 'benchmark').glob('*.csv') if not p.stem.startswith('__run_benchmark_')}
+    today = datetime.now(ZoneInfo('Europe/Rome')).date()
+    for identity in sorted(set(paths) | set(definitions)):
+        path = paths.get(identity)
+        definition = definitions.get(identity, {})
+        row = dict(name=identity, label=identity, source_type='csv', available=bool(path))
+        row.update(saved.get(identity, {}))
+        if definition:
+            row.update(source_type='buyhold', label=definition['label'], definition=definition)
+        if path:
+            stat = path.stat()
+            row.update(size_bytes=stat.st_size, updated_at=datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat())
+            sidecar = path.with_suffix('.meta.json')
+            if sidecar.is_file():
+                info = json.loads(sidecar.read_text())
+                row.update({k:v for k,v in info.items() if k not in ('label','hidden','name')})
+            row.update(benchmark_coverage(str(path), stat.st_mtime_ns, stat.st_size))
+            if row.get('coverage_error'):
+                row['available'] = False
+        row['source_type'] = 'buyhold' if definition else ('run' if row.get('source_job_id') else row.get('source_type', 'csv'))
+        row['stale_days'] = max(0, (today-date.fromisoformat(row['last_date'])).days) if row.get('last_date') else None
+        rows.append(row)
     return rows
 
 
 def update_benchmark(benchmark, payload):
     identity = studio.name(benchmark)
-    if not (studio.SHARED / 'benchmark' / f'{identity}.csv').is_file():
+    if not (studio.SHARED / 'benchmark' / f'{identity}.csv').is_file() and identity not in metadata().get('benchmark_definitions', {}):
         raise FileNotFoundError('Benchmark non trovato')
     if not isinstance(payload, dict) or set(payload) - {'label', 'notes', 'hidden'}:
         raise ValueError('Campo benchmark non supportato')
@@ -71,6 +107,8 @@ def update_benchmark(benchmark, payload):
         changes['hidden'] = payload['hidden']
     with registry() as state:
         state.setdefault('benchmarks', {}).setdefault(identity, {}).update(changes)
+        if 'label' in changes and identity in state.get('benchmark_definitions', {}):
+            state['benchmark_definitions'][identity]['label'] = changes['label']
     return next(row for row in benchmarks() if row['name'] == identity)
 
 
@@ -117,7 +155,7 @@ def save_benchmark(label, csv_bytes, *, source_job_id=None):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('x') as handle:
         pd.DataFrame({'date': dates.dt.strftime('%Y-%m-%d'), 'return': values}).to_csv(handle, index=False)
-    row = dict(label=label, source_job_id=source_job_id, observations=len(frame),
+    row = dict(label=label, source_job_id=source_job_id, source_type='run' if source_job_id else 'csv', observations=len(frame),
                created_at=datetime.now(timezone.utc).isoformat())
     with registry() as state:
         state.setdefault('benchmarks', {})[identity] = row
@@ -141,6 +179,13 @@ class SimulationService:
     def jobs(self):
         saved = metadata().get('runs', {})
         rows = self.repo.list_calculation_jobs(limit=200, kinds=('simulation', 'market_data_refresh'))
+        # Pinned runs remain reachable even after they fall outside the recent window.
+        present = {r['id'] for r in rows}
+        for identity, entry in saved.items():
+            if entry.get('pinned') and identity not in present:
+                row = self.repo.get_calculation_job(identity)
+                if row and row['kind'] == 'simulation':
+                    rows.append(row)
         # Polling lists carry small summaries. Full engine receipts, defaults
         # and coverage are fetched only when the operator opens a specific run.
         result = []
@@ -149,7 +194,7 @@ class SimulationService:
             receipt = row.get('result') or {}
             result.append(dict(row, archive=saved.get(row['id'], {}),
                 request_snapshot={k:v for k,v in snapshot.items() if k != 'data_coverage'},
-                result={k:v for k,v in receipt.items() if k in ('run_id','strategy','performance','artifacts')}))
+                result={k:v for k,v in receipt.items() if k in ('run_id','strategy','performance','artifacts','benchmark','benchmark_definition')}))
         return result
 
     def job(self, job_id):
@@ -259,3 +304,80 @@ class SimulationService:
     def restore_schedules(self):
         for row in self.schedules():
             self.install_schedule(row)
+        for row in self.benchmark_definitions():
+            self.install_benchmark_schedule(row)
+
+    def benchmark_definitions(self):
+        rows = list(metadata().get('benchmark_definitions', {}).values())
+        for row in rows:
+            if row.get('last_job_id'):
+                job = self.repo.get_calculation_job(row['last_job_id'])
+                if job:
+                    row['job'] = {k:job.get(k) for k in ('id','status','phase','error','done','finished_at')}
+        return rows
+
+    def save_benchmark_definition(self, payload):
+        from benchmark_studio import definition_id
+        ticker = str(payload.get('ticker') or '')
+        if not ticker.endswith('.json'):
+            raise ValueError('Selezionare una lista ticker per il benchmark giornaliero')
+        studio.resolve_symbols(ticker)
+        provider, feed = str(payload.get('provider') or 'yahoo_adj'), str(payload.get('alpaca_feed') or 'sip')
+        studio.data_folder(provider, 'daily', feed)
+        start = date.fromisoformat(str(payload.get('fromdate') or '2000-01-01'))
+        if start > datetime.now(ZoneInfo('Europe/Rome')).date() or start.year < 1900:
+            raise ValueError('Data inizio non valida')
+        hour = studio.numeric(payload.get('hour', 1), 'Ora', 0, 23)
+        minute = studio.numeric(payload.get('minute', 15), 'Minuti', 0, 59)
+        enabled = payload.get('enabled', True)
+        if not hour.is_integer() or not minute.is_integer() or not isinstance(enabled, bool):
+            raise ValueError('Ora/minuti interi e abilitazione booleana richiesti')
+        identity = definition_id(ticker, provider, feed)
+        row = dict(id=identity, ticker=ticker, provider=provider, alpaca_feed=feed,
+                   timeframe='daily', fromdate=start.isoformat(), label=str(payload.get('label') or f'Buy&Hold {Path(ticker).stem} · {provider}')[:160],
+                   hour=int(hour), minute=int(minute), enabled=enabled, timezone='Europe/Rome')
+        with registry() as state:
+            previous = state.setdefault('benchmark_definitions', {}).get(identity, {})
+            row = {**{k:v for k,v in previous.items() if k in ('last_job_id','last_error','last_triggered_at')}, **row}
+            state['benchmark_definitions'][identity] = row
+        self.install_benchmark_schedule(row)
+        return row
+
+    def install_benchmark_schedule(self, row):
+        identity = 'calculation:benchmark-schedule:' + row['id']
+        if self.scheduler.get_job(identity):
+            self.scheduler.remove_job(identity)
+        if row['enabled']:
+            self.scheduler.add_job(self.run_benchmark_schedule,
+                CronTrigger(hour=row['hour'], minute=row['minute'], timezone='Europe/Rome'),
+                args=[row['id']], id=identity, replace_existing=True, max_instances=1, coalesce=True,
+                misfire_grace_time=3600, executor='default')
+
+    def refresh_benchmark(self, identity):
+        row = metadata().get('benchmark_definitions', {}).get(identity)
+        if not row:
+            raise LookupError('Benchmark giornaliero non trovato')
+        profile = 'benchmark-' + identity
+        config = {k:row[k] for k in ('ticker','provider','alpaca_feed','timeframe','fromdate')}
+        config.update(todate=datetime.now(ZoneInfo('Europe/Rome')).date().isoformat(), symbols=studio.resolve_symbols(row['ticker']))
+        try:
+            job = self.calculations.create_job(kind='market_data_refresh', profile=profile,
+                snapshot=dict(kind='market_data_refresh', profile=profile, configuration=config, benchmark_definition=identity))
+        except Exception as exc:
+            with registry() as state:
+                state['benchmark_definitions'][identity].update(last_error=str(exc))
+            raise
+        with registry() as state:
+            state['benchmark_definitions'][identity].update(last_job_id=job['id'], last_error=None,
+                last_triggered_at=datetime.now(timezone.utc).isoformat())
+        return job
+
+    def run_benchmark_schedule(self, identity):
+        row = metadata().get('benchmark_definitions', {}).get(identity)
+        if row and row['enabled']:
+            try:
+                self.refresh_benchmark(identity)
+            except Exception:
+                # Error recorded in the registry; do not break other daily timers.
+                import logging
+                logging.getLogger(__name__).exception('Benchmark schedule failed: %s', identity)

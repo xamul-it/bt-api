@@ -174,6 +174,21 @@ def inventory():
                                         request.args.get('timeframe','daily'), request.args.get('feed','sip')))
 
 
+@sim_bp.get('/benchmark-definitions')
+def benchmark_definitions():
+    return jsonify(service.benchmark_definitions())
+
+
+@sim_bp.post('/benchmark-definitions')
+def benchmark_definition_save():
+    return jsonify(service.save_benchmark_definition(request.get_json() or {})), 201
+
+
+@sim_bp.post('/benchmark-definitions/<identity>/refresh')
+def benchmark_definition_refresh(identity):
+    return jsonify(service.refresh_benchmark(identity)), 202
+
+
 @sim_bp.get('/data/<symbol>/bars')
 def bars(symbol):
     return jsonify(studio.ticker_bars(symbol, request.args.get('provider','yahoo_adj'),
