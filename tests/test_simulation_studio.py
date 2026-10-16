@@ -108,14 +108,14 @@ def test_only_selected_lists_are_scheduled_and_download_then_calculate(isolated)
     assert srv.benchmarks()[0]['stale_days'] is None
     service.run_benchmark_schedule(chosen['id'])
     snapshot = calc.calls[0]['snapshot']
-    assert snapshot['configuration']['symbols'] == ['A','B']
-    assert snapshot['benchmark_definition'] == chosen['id']
+    assert snapshot['ticker_batch']['lists'][0]['symbols'] == ['A','B']
+    assert snapshot['ticker_batch']['lists'][0]['sources'][0]['definition_id'] == chosen['id']
     assert calc.calls[0]['kind'] == 'market_data_refresh'
     scheduler.jobs = {}; service.restore_schedules()
     assert len(scheduler.jobs) == 1
     assert service.benchmark_definitions()[0]['job']['status'] == 'completed'
     service.save_benchmark_definition({**chosen,'enabled':False})
-    assert not scheduler.jobs
+    assert len(scheduler.jobs) == 1  # disabling a benchmark preserves its download
     service.run_benchmark_schedule(chosen['id'])
     assert len(calc.calls) == 1
     with pytest.raises(ValueError): service.save_benchmark_definition({'ticker':'A,B'})

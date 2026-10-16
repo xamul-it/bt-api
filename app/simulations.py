@@ -46,6 +46,38 @@ def catalog():
                    profiles=[p.stem for p in sorted(SCHEDULED_DIR.glob('*.env'))])
 
 
+@sim_bp.get('/ticker-lists')
+def ticker_lists():
+    return jsonify(service.ticker_lists(request.args.get('symbol', ''), request.args.get('archived') == '1'))
+
+
+@sim_bp.post('/ticker-lists')
+def ticker_list_save():
+    if request.is_json:
+        return jsonify(service.save_ticker_list(request.get_json() or {}))
+    payload = json.loads(request.form.get('configuration', '{}'))
+    file = request.files.get('file')
+    content = file.read(1024 * 1024 + 1) if file else None
+    if content is not None and len(content) > 1024 * 1024:
+        raise ValueError('File troppo grande: massimo 1 MB')
+    return jsonify(service.save_ticker_list(payload, content, file.filename if file else ''))
+
+
+@sim_bp.post('/ticker-lists/refresh')
+def ticker_lists_refresh():
+    return jsonify(service.refresh_ticker_lists(ticker=(request.get_json() or {}).get('ticker'))), 202
+
+
+@sim_bp.post('/ticker-lists/<ticker>/archive')
+def ticker_list_archive(ticker):
+    return jsonify(service.archive_ticker_list(ticker))
+
+
+@sim_bp.post('/ticker-lists/<ticker>/restore')
+def ticker_list_restore(ticker):
+    return jsonify(service.restore_ticker_list(ticker))
+
+
 @sim_bp.get('/strategy')
 def strategy():
     return jsonify(studio.strategy_schema(request.args.get('name', '')))

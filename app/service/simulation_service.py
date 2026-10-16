@@ -304,8 +304,151 @@ class SimulationService:
     def restore_schedules(self):
         for row in self.schedules():
             self.install_schedule(row)
-        for row in self.benchmark_definitions():
-            self.install_benchmark_schedule(row)
+        self.install_ticker_schedules()
+
+    def ticker_lists(self, symbol='', archived=False):
+        from ticker_catalog import list_rows
+        state = metadata()
+        if archived:
+            return [dict(ticker=ticker, label=s.get('label') or Path(ticker).stem, archived=True)
+                    for ticker, s in state.get('ticker_lists', {}).items() if s.get('archived')]
+        rows = list_rows(state, symbol)
+        for row in rows:
+            job_id = state.get('ticker_lists', {}).get(row['ticker'], {}).get('last_job_id')
+            if job_id and self.repo:
+                job = self.repo.get_calculation_job(job_id)
+                if job:
+                    row['job'] = {k:job.get(k) for k in ('id', 'status', 'phase', 'error', 'finished_at')}
+        return rows
+
+    def save_ticker_list(self, payload, content=None, filename=''):
+        from ticker_catalog import parse_symbols, validate_settings
+        ticker = studio.name(payload.get('ticker'), suffix='.json')
+        payload = dict(payload, ticker=ticker)
+        settings = validate_settings(payload)
+        path = studio.SHARED / 'tickers' / ticker
+        symbols = parse_symbols(content, filename) if content is not None else studio.resolve_symbols(ticker)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with registry() as state:
+            previous = state.setdefault('ticker_lists', {}).get(ticker, {})
+            if previous.get('archived'):
+                raise ValueError('Identificativo archiviato: ripristinare la lista o scegliere un altro nome')
+            if payload.get('create') and path.exists():
+                raise ValueError('Una lista con questo identificativo esiste già')
+            if content is not None:
+                temp = path.with_suffix('.tmp')
+                temp.write_text(json.dumps(symbols, indent=2))
+                temp.replace(path)
+            state['ticker_lists'][ticker] = {**previous, **settings, 'archived': False}
+            definitions = state.setdefault('benchmark_definitions', {})
+            for definition in definitions.values():
+                if definition['ticker'] == ticker:
+                    definition['enabled'] = False
+            for source in settings['sources']:
+                if not source['benchmark_enabled'] and source['definition_id'] not in definitions:
+                    continue
+                identity = source['definition_id']
+                definitions[identity] = dict(definitions.get(identity, {}), id=identity,
+                    ticker=ticker, label=f"Buy&Hold {settings['label']} · {source['provider']}",
+                    provider=source['provider'], alpaca_feed=source['alpaca_feed'], timeframe='daily',
+                    fromdate=settings['fromdate'], hour=settings['hour'], minute=settings['minute'],
+                    enabled=source['benchmark_enabled'], timezone='Europe/Rome')
+        self.install_ticker_schedules()
+        return next(r for r in self.ticker_lists() if r['ticker'] == ticker)
+
+    def archive_ticker_list(self, ticker):
+        from ticker_catalog import sources_for
+        ticker = studio.name(ticker, suffix='.json')
+        path = studio.SHARED / 'tickers' / ticker
+        if not path.is_file():
+            raise FileNotFoundError('Lista non trovata')
+        with registry() as state:
+            sources = sources_for(ticker, state)
+            for source in sources:
+                source.update(download_enabled=False, benchmark_enabled=False)
+            backup = path.parent / '.archived' / (uuid.uuid4().hex + '.json')
+            backup.parent.mkdir(exist_ok=True)
+            # Preserve the original contents for recovery, and never delete market data.
+            path.replace(backup)
+            state.setdefault('ticker_lists', {}).setdefault(ticker, {}).update(
+                archived=True, archived_file=str(backup), sources=sources)
+            for definition in state.get('benchmark_definitions', {}).values():
+                if definition['ticker'] == ticker:
+                    definition['enabled'] = False
+        self.install_ticker_schedules()
+        return dict(archived=True, ticker=ticker)
+
+    def restore_ticker_list(self, ticker):
+        ticker = studio.name(ticker, suffix='.json')
+        with registry() as state:
+            settings = state.get('ticker_lists', {}).get(ticker)
+            if not settings or not settings.get('archived'):
+                raise LookupError('Lista archiviata non trovata')
+            path = studio.SHARED / 'tickers' / ticker
+            backup = Path(settings['archived_file'])
+            if backup.parent.resolve() != (path.parent / '.archived').resolve() or path.exists():
+                raise ValueError('Ripristino non possibile: identificativo già presente o archivio non valido')
+            backup.replace(path)
+            settings.update(archived=False)
+        return next(r for r in self.ticker_lists() if r['ticker'] == ticker)
+
+    def install_ticker_schedules(self):
+        from ticker_catalog import list_rows
+        for identity in getattr(self, '_ticker_schedule_ids', set()):
+            if self.scheduler.get_job(identity):
+                self.scheduler.remove_job(identity)
+        # Remove the former per-benchmark timers when upgrading a running service.
+        for row in metadata().get('benchmark_definitions', {}).values():
+            identity = 'calculation:benchmark-schedule:' + row['id']
+            if self.scheduler.get_job(identity):
+                self.scheduler.remove_job(identity)
+        slots = {(s.get('hour', 1), s.get('minute', 15)) for row in list_rows(metadata())
+                 for s in row['sources'] if s.get('download_enabled')}
+        self._ticker_schedule_ids = set()
+        for hour, minute in slots:
+            identity = f'calculation:ticker-batch:{hour:02}:{minute:02}'
+            self.scheduler.add_job(self.run_ticker_schedule,
+                CronTrigger(hour=hour, minute=minute, timezone='Europe/Rome'),
+                args=[hour, minute], id=identity, replace_existing=True, max_instances=1,
+                coalesce=True, misfire_grace_time=3600, executor='default')
+            self._ticker_schedule_ids.add(identity)
+
+    def run_ticker_schedule(self, hour, minute):
+        import logging
+        from apscheduler.triggers.date import DateTrigger
+        from app.service.calculation_job_service import CalculationConflict
+        try:
+            self.refresh_ticker_lists(hour=hour, minute=minute)
+        except CalculationConflict:
+            # A slower earlier slot must not cause this slot to be silently lost.
+            self.scheduler.add_job(self.run_ticker_schedule,
+                DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(minutes=5)),
+                args=[hour, minute], id=f'calculation:ticker-retry:{hour:02}:{minute:02}',
+                replace_existing=True, max_instances=1, misfire_grace_time=3600, executor='default')
+        except Exception:
+            logging.getLogger(__name__).exception('Daily ticker batch failed')
+
+    def refresh_ticker_lists(self, *, hour=None, minute=None, ticker=None):
+        from ticker_catalog import build_plan
+        plan = build_plan(metadata(), hour=hour, minute=minute, ticker=ticker)
+        if not plan['lists']:
+            raise ValueError('Nessuna lista con download abilitato')
+        return self.submit_ticker_plan(plan)
+
+    def submit_ticker_plan(self, plan):
+        from ticker_catalog import now
+        plan.update(registry_dir=str(REGISTRY_DIR), todate=datetime.now(ZoneInfo('Europe/Rome')).date().isoformat())
+        # One profile prevents overlap between manual and scheduled catalog batches.
+        job = self.calculations.create_job(kind='market_data_refresh', profile='ticker-catalog-daily',
+            snapshot=dict(kind='market_data_refresh', profile='ticker-catalog-daily', ticker_batch=plan))
+        with registry() as state:
+            for row in plan['lists']:
+                state.setdefault('ticker_lists', {}).setdefault(row['ticker'], {}).update(last_job_id=job['id'])
+                for source in row['sources']:
+                    definition = state.get('benchmark_definitions', {}).get(source.get('definition_id'))
+                    if definition and source.get('benchmark_enabled'):
+                        definition.update(last_job_id=job['id'], last_triggered_at=now(), last_error=None)
+        return job
 
     def benchmark_definitions(self):
         rows = list(metadata().get('benchmark_definitions', {}).values())
@@ -340,43 +483,35 @@ class SimulationService:
             previous = state.setdefault('benchmark_definitions', {}).get(identity, {})
             row = {**{k:v for k,v in previous.items() if k in ('last_job_id','last_error','last_triggered_at')}, **row}
             state['benchmark_definitions'][identity] = row
+            if enabled:
+                settings = state.setdefault('ticker_lists', {}).setdefault(ticker, {})
+                sources = settings.setdefault('sources', [])
+                source = next((s for s in sources if s['provider'] == provider and s.get('alpaca_feed', 'sip') == feed), None)
+                if source is None:
+                    source = dict(provider=provider, alpaca_feed=feed)
+                    sources.append(source)
+                source.update(download_enabled=True, benchmark_enabled=True,
+                    fromdate=start.isoformat(), hour=int(hour), minute=int(minute), definition_id=identity)
         self.install_benchmark_schedule(row)
         return row
 
     def install_benchmark_schedule(self, row):
-        identity = 'calculation:benchmark-schedule:' + row['id']
-        if self.scheduler.get_job(identity):
-            self.scheduler.remove_job(identity)
-        if row['enabled']:
-            self.scheduler.add_job(self.run_benchmark_schedule,
-                CronTrigger(hour=row['hour'], minute=row['minute'], timezone='Europe/Rome'),
-                args=[row['id']], id=identity, replace_existing=True, max_instances=1, coalesce=True,
-                misfire_grace_time=3600, executor='default')
+        self.install_ticker_schedules()
 
     def refresh_benchmark(self, identity):
         row = metadata().get('benchmark_definitions', {}).get(identity)
         if not row:
             raise LookupError('Benchmark giornaliero non trovato')
-        profile = 'benchmark-' + identity
-        config = {k:row[k] for k in ('ticker','provider','alpaca_feed','timeframe','fromdate')}
-        config.update(todate=datetime.now(ZoneInfo('Europe/Rome')).date().isoformat(), symbols=studio.resolve_symbols(row['ticker']))
-        try:
-            job = self.calculations.create_job(kind='market_data_refresh', profile=profile,
-                snapshot=dict(kind='market_data_refresh', profile=profile, configuration=config, benchmark_definition=identity))
-        except Exception as exc:
-            with registry() as state:
-                state['benchmark_definitions'][identity].update(last_error=str(exc))
-            raise
-        with registry() as state:
-            state['benchmark_definitions'][identity].update(last_job_id=job['id'], last_error=None,
-                last_triggered_at=datetime.now(timezone.utc).isoformat())
-        return job
+        from ticker_catalog import build_plan
+        # A manual refresh can calculate a disabled benchmark without enabling its timer.
+        state = {'benchmark_definitions': {identity: dict(row, enabled=True)}}
+        return self.submit_ticker_plan(build_plan(state, ticker=row['ticker']))
 
     def run_benchmark_schedule(self, identity):
         row = metadata().get('benchmark_definitions', {}).get(identity)
         if row and row['enabled']:
             try:
-                self.refresh_benchmark(identity)
+                self.refresh_ticker_lists(hour=row['hour'], minute=row['minute'])
             except Exception:
                 # Error recorded in the registry; do not break other daily timers.
                 import logging
