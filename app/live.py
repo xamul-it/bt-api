@@ -1,7 +1,7 @@
 # Crea un Blueprint per il controller dello scheduler
 import logging
 from datetime import datetime, timezone
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, abort
 #from alpaca_trade_api import REST
 from app.manager.cerebro_manager import CerebroManager
 from app.paths import CONFIG_PATH
@@ -78,8 +78,15 @@ def _resolve_portfolio_credentials(portfolio_key_id=None):
                 portfolio.get('portfolio_key_id'),
                 portfolio.get('display_name'),
             )
+        except ValueError:
+            if resolved:
+                abort(404, description="Conto Alpaca sconosciuto")
         except Exception:
             logger.exception("Unable to resolve Alpaca portfolio %s", resolved)
+            if resolved:
+                abort(503, description="Registro conti Alpaca non disponibile")
+    elif resolved:
+        abort(503, description="Registro conti Alpaca non disponibile")
     api_key = os.environ.get('ALPACA_API_KEY', '')
     secret_key = os.environ.get('ALPACA_SECRET_KEY', '')
     return (api_key, secret_key, True, resolved or 'legacy/default', None)
@@ -320,6 +327,22 @@ def _trading_clients(portfolio_key_id=None):
         trading_client._session.verify = False
         historical_client._session.verify = False
     return trading_client, historical_client, resolved_key
+
+
+@al_bp.route('/contexts', methods=['GET'])
+def get_portfolio_contexts():
+    if not repo.available():
+        return jsonify({'error': 'Registro conti non disponibile'}), 503
+    # Return only public identifiers; credentials must never reach the browser.
+    rows = repo.list_alpaca_portfolios(active_only=True)
+    assignments = {row['portfolio_key_id']: row.get('assigned_profile')
+                   for row in repo.list_assigned_portfolios()}
+    return jsonify([{
+        'portfolio_key_id': row['portfolio_key_id'],
+        'display_name': row.get('display_name') or row['portfolio_key_id'],
+        'paper': bool(row.get('paper', True)),
+        'profile': assignments.get(row['portfolio_key_id']),
+    } for row in rows])
 
 
 @al_bp.route('/portfolio', methods=['GET'])

@@ -13,6 +13,7 @@ from app.main import mn
 from app.watchtower import obs_bp
 from app.simulations import sim_bp
 from app.auth import init_auth
+from app.quote_monitor import quote_monitor_bp
 
 import os
 import sys
@@ -122,6 +123,7 @@ app.register_blueprint(st_bp, url_prefix=f'{url_prefix}/st')
 
 #Gestionew dei alpaca
 app.register_blueprint(al_bp, url_prefix=f'{url_prefix}/al')
+app.register_blueprint(quote_monitor_bp, url_prefix=f'{url_prefix}/quote-monitor')
 
 # Registra il Blueprint dello scheduler
 app.register_blueprint(sc_bp, url_prefix=f'{url_prefix}/sc')
