@@ -44,16 +44,27 @@ else:
 
 
 def _origin_matches(candidate, allowed):
-    if not candidate:
+    """Compare scheme/host/port, accepting a Referer URL with a path."""
+    if not candidate or not allowed:
         return False
-    if allowed.endswith(':*'):
+    wildcard_port = allowed.endswith(':*')
+    try:
         candidate_parts = urlsplit(candidate)
-        allowed_parts = urlsplit(allowed[:-2])
+        allowed_parts = urlsplit(allowed[:-2] if wildcard_port else allowed)
+        for parts in (candidate_parts, allowed_parts):
+            if parts.scheme not in ('http', 'https') or not parts.hostname:
+                return False
+            if parts.username is not None or parts.password is not None:
+                return False
+        candidate_port = candidate_parts.port or (443 if candidate_parts.scheme == 'https' else 80)
+        allowed_port = allowed_parts.port or (443 if allowed_parts.scheme == 'https' else 80)
         return (
             candidate_parts.scheme == allowed_parts.scheme
             and candidate_parts.hostname == allowed_parts.hostname
+            and (wildcard_port or candidate_port == allowed_port)
         )
-    return candidate == allowed
+    except ValueError:
+        return False
 
 
 def _iso_or_none(value):
@@ -93,7 +104,7 @@ def _resolve_portfolio_credentials(portfolio_key_id=None):
 
 
 def _alpaca_get(path, params=None, portfolio_key_id=None):
-    api_key, secret_key, _paper, _resolved_key, _display_name = _resolve_portfolio_credentials(portfolio_key_id)
+    api_key, secret_key, paper, _resolved_key, _display_name = _resolve_portfolio_credentials(portfolio_key_id)
     if not api_key or not secret_key:
         return None, ('Alpaca credentials not configured', 503)
 
@@ -101,7 +112,8 @@ def _alpaca_get(path, params=None, portfolio_key_id=None):
         'APCA-API-KEY-ID': api_key,
         'APCA-API-SECRET-KEY': secret_key,
     }
-    url = f"{BASE_URL}{path}"
+    base_url = BASE_URL if paper else "https://api.alpaca.markets"
+    url = f"{base_url}{path}"
 
     try:
         resp = requests.get(
@@ -301,12 +313,9 @@ def check_origin():
 
     allowed_list = [o.strip() for o in ALLOWED_ORIGINS.split(',')]
 
-    # Validate origin or referer
-    is_valid = False
-    if origin and any(_origin_matches(origin, allowed) for allowed in allowed_list):
-        is_valid = True
-    elif referer and any(_origin_matches(referer, allowed) for allowed in allowed_list):
-        is_valid = True
+    # Origin is authoritative when supplied; same-origin GETs often only send Referer.
+    candidate = origin if origin else referer
+    is_valid = any(_origin_matches(candidate, allowed) for allowed in allowed_list)
 
     if not is_valid:
         logger.warning(
@@ -343,6 +352,29 @@ def get_portfolio_contexts():
         'paper': bool(row.get('paper', True)),
         'profile': assignments.get(row['portfolio_key_id']),
     } for row in rows])
+
+
+@al_bp.route('/orders', methods=['GET'])
+def get_portfolio_orders():
+    portfolio_key_id = request.args.get('portfolio_key_id')
+    if not portfolio_key_id:
+        return jsonify({'error': 'portfolio_key_id obbligatorio'}), 400
+    status = request.args.get('status', 'all')
+    if status not in ('all', 'open', 'closed'):
+        return jsonify({'error': 'Stato ordini non valido'}), 400
+    params = {'status': status, 'limit': 500, 'direction': 'desc', 'nested': 'true'}
+    for key in ('after', 'until'):
+        value = request.args.get(key)
+        if value:
+            normalized = _iso_or_none(value)
+            if not normalized:
+                return jsonify({'error': f'Invalid {key}'}), 400
+            params[key] = normalized
+    payload, error = _alpaca_get('/v2/orders', params=params, portfolio_key_id=portfolio_key_id)
+    if error:
+        return jsonify({'error': error[0]}), error[1]
+    return jsonify({'orders': payload, 'truncated': len(payload) >= 500,
+                    'portfolio_key_id': portfolio_key_id})
 
 
 @al_bp.route('/portfolio', methods=['GET'])

@@ -1,5 +1,6 @@
 """Authenticated online simulation endpoints. No trading modes are exposed."""
 import json
+from io import BytesIO
 from pathlib import Path
 
 from flask import Blueprint, jsonify, request, send_file, current_app
@@ -132,6 +133,11 @@ def log(job_id):
     return jsonify(output=service.calculations.read_log(job_id, limit=16000))
 
 
+@sim_bp.delete('/jobs/<job_id>')
+def delete_run(job_id):
+    return jsonify(service.delete_run(job_id))
+
+
 @sim_bp.get('/jobs/<job_id>/artifacts/<filename>')
 def artifact(job_id, filename):
     return send_file(service.artifact(job_id, filename), conditional=True,
@@ -147,9 +153,34 @@ def trades(job_id):
     data = json.loads(path.read_text())
     if not isinstance(data, list):
         data = list(data.values()) if isinstance(data, dict) else []
+    symbol = request.args.get('symbol')
+    if symbol:
+        data = [row for row in data if (row.get('asset') or row.get('symbol')) == symbol]
     page = max(1, int(request.args.get('page', 1)))
     size = max(1, min(200, int(request.args.get('limit', 50))))
     return jsonify(total=len(data), page=page, rows=data[(page-1)*size:page*size])
+
+
+@sim_bp.get('/jobs/<job_id>/diagnostics')
+def diagnostics(job_id):
+    from app.service.simulation_diagnostics import build_diagnostics
+    history_days = max(1, min(1000, int(request.args.get('history_days', 25))))
+    # Use the same authorization/path validation as the artifact endpoints.
+    service.job(job_id)
+    return jsonify(build_diagnostics(
+        lambda filename: service.artifact(job_id, filename), history_days=history_days,
+    ))
+
+
+@sim_bp.get('/jobs/<job_id>/trades.xlsx')
+def trades_excel(job_id):
+    content = service.export_trades_excel(job_id)
+    return send_file(
+        BytesIO(content),
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=f'trades-{job_id}.xlsx',
+    )
 
 
 @sim_bp.get('/jobs/<job_id>/equity')
@@ -160,7 +191,34 @@ def equity(job_id):
     curve = (1 + pd.to_numeric(frame.iloc[:, -1])).cumprod()
     stride = max(1, len(frame)//1000)
     indices = sorted(set(range(0,len(frame),stride)) | ({len(frame)-1} if len(frame) else set()))
-    return jsonify(points=[dict(date=str(frame.iloc[i,0]), value=float(curve.iloc[i])) for i in indices])
+    points = [dict(date=str(frame.iloc[i,0]), value=float(curve.iloc[i])) for i in indices]
+    drawdown = curve / curve.cummax() - 1
+    drawdown_points = [dict(date=str(frame.iloc[i,0]), value=float(drawdown.iloc[i])) for i in indices]
+
+    benchmark_points = []
+    try:
+        benchmark_frame = pd.read_csv(service.artifact(job_id, 'benchmark.csv'))
+        run_dates = pd.to_datetime(frame.iloc[:, 0], utc=True).dt.normalize()
+        benchmark_dates = pd.to_datetime(benchmark_frame.iloc[:, 0], utc=True).dt.normalize()
+        benchmark_frame = benchmark_frame.loc[
+            benchmark_dates.between(run_dates.min(), run_dates.max())
+        ].reset_index(drop=True)
+        benchmark_returns = pd.to_numeric(benchmark_frame['return'], errors='raise')
+        benchmark_curve = (1 + benchmark_returns).cumprod()
+        benchmark_stride = max(1, len(benchmark_frame)//1000)
+        benchmark_indices = sorted(
+            set(range(0, len(benchmark_frame), benchmark_stride)) |
+            ({len(benchmark_frame)-1} if len(benchmark_frame) else set())
+        )
+        benchmark_points = [
+            dict(date=str(benchmark_frame.iloc[i, 0]), value=float(benchmark_curve.iloc[i]))
+            for i in benchmark_indices
+        ]
+    except (FileNotFoundError, KeyError, ValueError):
+        # Older runs may not have an immutable benchmark artifact.
+        pass
+
+    return jsonify(points=points, benchmark_points=benchmark_points, drawdown_points=drawdown_points)
 
 
 @sim_bp.get('/benchmarks')

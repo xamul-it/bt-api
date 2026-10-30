@@ -11,3 +11,6 @@ out/
 config/alpaca_cache/
 config/scheduler-state.json
 config/backtesting/
+
+# Derived archive chart indexes (source recordings remain in out/dump)
+config/archive-index/

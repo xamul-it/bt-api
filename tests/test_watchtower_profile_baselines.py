@@ -16,6 +16,7 @@ def test_baseline_report_is_bound_to_profile_and_recorded_run(monkeypatch, tmp_p
 
     monkeypatch.setattr(watchtower, 'repo', Repo())
     monkeypatch.setattr(watchtower._pbl, 'BT_CORE', tmp_path)
+    monkeypatch.setattr(watchtower._pbl, 'SCHEDULED_DIR', tmp_path / 'scheduled')
     report = tmp_path / 'out/overnight_ah_flat_composite/OvernightAHFlatComposite/baseline_challenger_test/stats.html'
     report.parent.mkdir(parents=True)
     report.write_text('<html>saved report</html>')
@@ -32,6 +33,47 @@ def test_baseline_report_is_bound_to_profile_and_recorded_run(monkeypatch, tmp_p
     baseline['run_id'] = '../outside'
     assert client.get(route).status_code == 404
     baseline['run_id'] = 'missing_report'
+    assert client.get(route).status_code == 404
+
+
+def test_baseline_report_uses_profile_checkout_and_rejects_escaped_artifact(monkeypatch, tmp_path):
+    import app.watchtower as watchtower
+
+    baseline = {'id': 113, 'profile': 'live', 'strategy': 'overnight_ah.OvernightAH',
+                'run_id': 'baseline_live_test'}
+
+    class Repo:
+        def available(self): return True
+        def get_profile_baseline(self, baseline_id):
+            return baseline if baseline_id == 113 else None
+
+    monkeypatch.setattr(watchtower, 'repo', Repo())
+    monkeypatch.setattr(watchtower._pbl, 'BT_CORE', tmp_path / 'dev/bt-core')
+    scheduled = tmp_path / 'scheduled'
+    scheduled.mkdir()
+    monkeypatch.setattr(watchtower._pbl, 'SCHEDULED_DIR', scheduled)
+    production = tmp_path / 'prod'
+    (scheduled / 'live.env').write_text(f'CODE_ROOT="{production}"\n')
+    relative = 'out/overnight_ah/OvernightAH/baseline_live_test/stats.html'
+    report = production / 'bt-core' / relative
+    report.parent.mkdir(parents=True)
+    report.write_text('<html>production baseline</html>')
+    # A partial directory in the default archive must not hide the real report.
+    (watchtower._pbl.BT_CORE / relative).parent.mkdir(parents=True)
+    app = Flask(__name__)
+    app.register_blueprint(watchtower.obs_bp, url_prefix='/dyn/obs')
+    client = app.test_client()
+    route = '/dyn/obs/watchtower/cron/live/baselines/113/stats.html'
+    response = client.get(route)
+    assert response.status_code == 200
+    assert response.mimetype == 'text/html'
+    assert response.data == b'<html>production baseline</html>'
+    assert client.get(route.replace('/live/', '/mirror/')).status_code == 404
+    report.unlink()
+    assert client.get(route).status_code == 404
+    outside = tmp_path / 'outside.html'
+    outside.write_text('outside archive')
+    report.symlink_to(outside)
     assert client.get(route).status_code == 404
 
 

@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import fcntl
+import io
 import json
+import math
 import os
+import re
 import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
@@ -162,6 +165,179 @@ def save_benchmark(label, csv_bytes, *, source_job_id=None):
     return dict(name=identity, **row)
 
 
+def _finite_number(value):
+    try:
+        number = float(value)
+        return number if math.isfinite(number) else None
+    except (TypeError, ValueError):
+        return None
+
+
+@lru_cache(maxsize=512)
+def _log_metrics(path, mtime_ns, size):
+    metrics = {}
+    try:
+        # Stream logs: long backtests can produce files larger than memory.
+        with open(path, encoding='utf-8', errors='replace') as handle:
+            for line in handle:
+                if 'TRADE_RETURN_STATS ' in line:
+                    try:
+                        summary = json.loads(line.split('TRADE_RETURN_STATS ', 1)[1])
+                        metrics['average_trade_return_pct'] = _finite_number(summary.get('mean_pct'))
+                    except (ValueError, AttributeError):
+                        pass
+                match = re.search(r'\bSharpe:\s*([-+0-9.eE]+)', line)
+                if match:
+                    metrics['sharpe'] = _finite_number(match[1])
+    except OSError:
+        pass
+    return metrics
+
+
+@lru_cache(maxsize=512)
+def _artifact_metrics(path, mtime_ns, size):
+    try:
+        data = json.loads(Path(path).read_text())
+        rows = data if isinstance(data, list) else ([data] if 'Sharpe' in data else list(data.values()))
+        if Path(path).name == 'results.json':
+            row = next((row for row in rows if isinstance(row, dict) and 'Sharpe' in row), {})
+            return {'sharpe': _finite_number(row.get('Sharpe'))}
+        values = [_finite_number(row.get('pnl_pct')) for row in rows if isinstance(row, dict)]
+        values = [value for value in values if value is not None]
+        return {'average_trade_return_pct': sum(values) / len(values) if values else None}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+
+
+@lru_cache(maxsize=512)
+def _daily_risk_metrics(path, mtime_ns, size):
+    """Full-history daily risk metrics, annualized over 252 sessions (rf=0)."""
+    import pandas as pd
+    empty = dict(sharpe=None, sortino=None, volatility_pct=None)
+    try:
+        returns = pd.read_csv(path).iloc[:, -1].astype(float)
+        if len(returns) < 2 or not returns.map(math.isfinite).all():
+            return empty
+        deviation = returns.std(ddof=1)
+        downside = math.sqrt(returns.clip(upper=0).pow(2).mean())
+        return dict(
+            sharpe=_finite_number(returns.mean() / deviation * math.sqrt(252)) if deviation else None,
+            sortino=_finite_number(returns.mean() / downside * math.sqrt(252)) if downside else None,
+            volatility_pct=_finite_number(deviation * math.sqrt(252) * 100),
+        )
+    except (OSError, ValueError, IndexError, pd.errors.EmptyDataError):
+        return empty
+
+
+@lru_cache(maxsize=512)
+def _stats_risk_metrics(path, mtime_ns, size):
+    """Read the Strategy column, never the benchmark, from QuantStats output."""
+    from html.parser import HTMLParser
+
+    class MetricsParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.cells = []
+            self.cell = None
+            self.strategy_index = None
+            self.metrics = {}
+
+        def handle_starttag(self, tag, attrs):
+            if tag == 'table':
+                self.strategy_index = None
+            elif tag == 'tr':
+                self.cells = []
+            elif tag in ('td', 'th'):
+                self.cell = []
+
+        def handle_data(self, data):
+            if self.cell is not None:
+                self.cell.append(data)
+
+        def handle_endtag(self, tag):
+            if tag in ('td', 'th') and self.cell is not None:
+                self.cells.append(''.join(self.cell).strip())
+                self.cell = None
+            elif tag == 'tr':
+                if 'Strategy' in self.cells:
+                    self.strategy_index = self.cells.index('Strategy')
+                elif self.strategy_index is not None and len(self.cells) > self.strategy_index:
+                    key = {'Sortino': 'sortino', 'Volatility (ann.)': 'volatility_pct'}.get(self.cells[0])
+                    if key:
+                        value = _finite_number(self.cells[self.strategy_index].rstrip('%').replace(',', ''))
+                        if value is not None:
+                            self.metrics[key] = value
+
+    parser = MetricsParser()
+    try:
+        with open(path, encoding='utf-8') as handle:
+            for chunk in iter(lambda: handle.read(65536), ''):
+                parser.feed(chunk)
+        parser.close()
+        return parser.metrics
+    except (OSError, UnicodeError):
+        return {}
+
+
+def enrich_performance(row):
+    """Backfill summaries from original engine output without changing run artifacts."""
+    receipt = dict(row.get('result') or {})
+    performance = dict(receipt.get('performance') or {})
+    if row.get('kind') != 'simulation' or not row.get('done'):
+        return receipt
+    recovered = {}
+    daily_metrics = dict(sharpe=None, sortino=None, volatility_pct=None)
+    log_path = row.get('log_path')
+    if log_path:
+        path = Path(log_path)
+        try:
+            stat = path.stat()
+            recovered.update(_log_metrics(str(path), stat.st_mtime_ns, stat.st_size))
+        except OSError:
+            pass
+    # Recover daily Sharpe from the full original return series.
+    strategy, run_id = receipt.get('strategy'), receipt.get('run_id')
+    if strategy and run_id:
+        from watchtower_runtime import build_outpath
+        root = (studio.CORE / 'out').resolve()
+        output = Path(build_outpath(str(root), strategy, run_id)).resolve()
+        if output.is_relative_to(root):
+            path = output / 'returns.csv'
+            try:
+                stat = path.stat()
+                daily_metrics = _daily_risk_metrics(str(path), stat.st_mtime_ns, stat.st_size)
+            except OSError:
+                pass
+            path = output / 'stats.html'
+            try:
+                stat = path.stat()
+                daily_metrics.update(_stats_risk_metrics(str(path), stat.st_mtime_ns, stat.st_size))
+            except OSError:
+                pass
+            for filename in ('trades.json',):
+                key = 'average_trade_return_pct'
+                if recovered.get(key) is not None:
+                    continue
+                path = output / filename
+                try:
+                    stat = path.stat()
+                    values = _artifact_metrics(str(path), stat.st_mtime_ns, stat.st_size)
+                    recovered.update({k: v for k, v in values.items() if v is not None})
+                except OSError:
+                    pass
+    # Historical receipts/logs contain the old annual Sharpe: never expose it
+    # under the daily Sharpe column, even when the daily series is unavailable.
+    performance.update(daily_metrics)
+    daily_sharpe = daily_metrics['sharpe']
+    if isinstance(receipt.get('results'), dict):
+        receipt['results'] = dict(receipt['results'], Sharpe=round(daily_sharpe, 3) if daily_sharpe is not None else None)
+    for key in ('average_trade_return_pct',):
+        if performance.get(key) is None:
+            performance[key] = recovered.get(key)
+    receipt['performance'] = performance
+    return receipt
+
+
 class SimulationService:
     def __init__(self, calculations, scheduler, repo):
         self.calculations, self.scheduler, self.repo = calculations, scheduler, repo
@@ -190,8 +366,10 @@ class SimulationService:
         # and coverage are fetched only when the operator opens a specific run.
         result = []
         for row in rows:
+            if saved.get(row['id'], {}).get('deleted_at'):
+                continue
             snapshot = row.get('request_snapshot') or {}
-            receipt = row.get('result') or {}
+            receipt = enrich_performance(row)
             result.append(dict(row, archive=saved.get(row['id'], {}),
                 request_snapshot={k:v for k,v in snapshot.items() if k != 'data_coverage'},
                 result={k:v for k,v in receipt.items() if k in ('run_id','strategy','performance','artifacts','benchmark','benchmark_definition')}))
@@ -199,9 +377,11 @@ class SimulationService:
 
     def job(self, job_id):
         row = self.repo.get_calculation_job(job_id)
+        if metadata().get('runs', {}).get(job_id, {}).get('deleted_at'):
+            raise LookupError('Simulazione cancellata')
         if not row or row['kind'] not in ('simulation', 'market_data_refresh'):
             raise LookupError('Simulazione non trovata')
-        return dict(row, archive=metadata().get('runs', {}).get(job_id, {}))
+        return dict(row, result=enrich_performance(row), archive=metadata().get('runs', {}).get(job_id, {}))
 
     def artifact(self, job_id, filename):
         if filename not in ARTIFACTS:
@@ -218,6 +398,113 @@ class SimulationService:
         if not path.is_relative_to(root) or not path.is_file():
             raise FileNotFoundError('Artefatto non disponibile per questo run')
         return path
+
+    def export_trades_excel(self, job_id):
+        job = self.job(job_id)
+        timeframe = str(
+            (job.get('request_snapshot') or {}).get('configuration', {}).get('timeframe') or 'daily'
+        )
+        path = self.artifact(job_id, 'trades.json')
+        if path.stat().st_size > 50 * 1024 * 1024:
+            raise ValueError('Tabella troppo grande per l’esportazione Excel')
+        data = json.loads(path.read_text(encoding='utf-8'))
+        if not isinstance(data, list):
+            data = list(data.values()) if isinstance(data, dict) else []
+        rows = [row for row in data if isinstance(row, dict)]
+        if not rows:
+            raise ValueError('Nessun trade da esportare')
+
+        keys = list(dict.fromkeys(key for row in rows for key in row))
+        gain_key = next((key for key in ('pct_gain', 'pnl_pct', 'pnl_percent') if key in keys), None)
+        priority = [
+            key for key in (
+                'asset', 'entry_side', 'open_datetime', 'close_datetime', gain_key,
+                'entry_signal_dt', 'exit_signal_dt',
+            ) if key
+        ]
+        ordered = (
+            [key for key in priority if key in keys]
+            + [key for key in keys if key not in priority and key != 'duration_bars']
+            + (['duration_bars'] if 'duration_bars' in keys else [])
+        )
+        labels = {
+            'asset': 'Ticker', 'entry_side': 'Direzione',
+            'open_datetime': 'Data ingresso', 'close_datetime': 'Data uscita',
+            'pct_gain': 'Gain %', 'pnl_pct': 'Gain %', 'pnl_percent': 'Gain %',
+            'entry_signal_dt': 'Segnale ingresso', 'exit_signal_dt': 'Segnale uscita',
+            'duration_bars': 'Durata (barre)', 'pnl': 'P/L',
+            'pnlcomm': 'P/L dopo commissioni', 'size': 'Quantità',
+            'price': 'Prezzo ingresso', 'value': 'Valore posizione all’ingresso',
+            'entry_delay_bars': 'Ritardo ingresso (barre)',
+            'exit_delay_bars': 'Ritardo uscita (barre)',
+            'entry_bucket_name': 'Finestra ingresso',
+            'exit_bucket_name': 'Finestra uscita', 'exit_reason': 'Motivo uscita',
+        }
+
+        try:
+            import xlsxwriter
+        except ImportError as exc:
+            raise ValueError('xlsxwriter_not_available') from exc
+
+        output = io.BytesIO()
+        workbook = xlsxwriter.Workbook(output, {'in_memory': True, 'nan_inf_to_errors': True})
+        sheet = workbook.add_worksheet('Trade')
+        header = workbook.add_format({'bold': True, 'bg_color': '#E8EEF7', 'border': 1})
+        ticker = workbook.add_format({'bold': True})
+        date_only = workbook.add_format({'num_format': 'dd/mm/yyyy'})
+        date_time = workbook.add_format({'num_format': 'dd/mm/yyyy hh:mm'})
+        decimal_2 = workbook.add_format({'num_format': '#,##0.00'})
+        decimal_4 = workbook.add_format({'num_format': '#,##0.####'})
+        percent_points = workbook.add_format({'num_format': '0.00"%"'})
+        integer = workbook.add_format({'num_format': '0'})
+        date_keys = {'open_datetime', 'close_datetime', 'entry_signal_dt', 'exit_signal_dt'}
+        pct_keys = {'pct_gain', 'pnl_pct', 'pnl_percent'}
+        two_decimal_keys = {'pnl', 'pnlcomm', 'price', 'value'}
+        integer_keys = {'entry_delay_bars', 'exit_delay_bars'}
+        widths = [len(labels.get(key, key)) for key in ordered]
+
+        for col, key in enumerate(ordered):
+            sheet.write_string(0, col, labels.get(key, key.replace('_', ' ').capitalize()), header)
+        for row_index, row in enumerate(rows, start=1):
+            for col, key in enumerate(ordered):
+                value = row.get(key)
+                if value in (None, ''):
+                    continue
+                display = value
+                if key in date_keys:
+                    try:
+                        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00')).replace(tzinfo=None)
+                        fmt = date_time if timeframe == 'minutes' else date_only
+                        sheet.write_datetime(row_index, col, parsed, fmt)
+                        display = parsed.strftime('%d/%m/%Y' if fmt is date_only else '%d/%m/%Y %H:%M')
+                    except (TypeError, ValueError):
+                        sheet.write_string(row_index, col, str(value))
+                elif key == 'duration_bars':
+                    try:
+                        minutes = max(0, round(float(value)))
+                        suffix = 'barra' if minutes == 1 else 'barre'
+                        display = f'{minutes // 60:02d}:{minutes % 60:02d} ({minutes} {suffix})'
+                    except (TypeError, ValueError):
+                        display = str(value)
+                    sheet.write_string(row_index, col, str(display))
+                elif key == 'entry_side':
+                    display = {'long': 'Long', 'short': 'Short'}.get(str(value), str(value))
+                    sheet.write_string(row_index, col, display)
+                elif isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+                    fmt = (percent_points if key in pct_keys else decimal_2 if key in two_decimal_keys
+                           else integer if key in integer_keys else decimal_4)
+                    sheet.write_number(row_index, col, value, fmt)
+                else:
+                    display = json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
+                    sheet.write_string(row_index, col, display, ticker if key == 'asset' else None)
+                widths[col] = min(50, max(widths[col], len(str(display))))
+
+        sheet.freeze_panes(1, 0)
+        sheet.autofilter(0, 0, len(rows), len(ordered) - 1)
+        for col, width in enumerate(widths):
+            sheet.set_column(col, col, max(10, width + 2))
+        workbook.close()
+        return output.getvalue()
 
     def archive_run(self, job_id, payload):
         row = self.job(job_id)
@@ -239,6 +526,17 @@ class SimulationService:
             saved = state.setdefault('runs', {}).setdefault(job_id, {})
             saved.update(updates)
         return self.job(job_id)
+
+    def delete_run(self, job_id):
+        row = self.job(job_id)
+        if row['kind'] != 'simulation' or not row.get('done'):
+            raise ValueError('Si possono cancellare solo backtest terminati')
+        with registry() as state:
+            state.setdefault('runs', {}).setdefault(job_id, {}).update(
+                hidden=True, pinned=False,
+                deleted_at=datetime.now(timezone.utc).isoformat(),
+            )
+        return {'id': job_id, 'deleted': True}
 
     def refresh_data(self, payload):
         # Use the modern core loader. Never clear/truncate existing files.

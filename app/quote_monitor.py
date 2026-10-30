@@ -388,3 +388,41 @@ def replay_control():
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     return jsonify(result)
+
+
+@quote_monitor_bp.route('/archives/<symbol>/index', methods=['GET', 'POST'])
+def archive_index(symbol):
+    from app.service.archive_chart_service import archive_chart_service
+    try:
+        path = archive_path(symbol)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    if not path.is_file():
+        return jsonify(error='Registrazione non trovata'), 404
+    if request.method == 'POST':
+        body = request.get_json(silent=True) or {}
+        if not isinstance(body, dict):
+            return jsonify(error='Richiesta non valida'), 400
+        return jsonify(archive_chart_service.start(path, force=body.get('refresh') is True)), 202
+    return jsonify(archive_chart_service.inspect(path))
+
+
+@quote_monitor_bp.get('/archives/<symbol>/chart')
+def archive_chart(symbol):
+    from app.service.archive_chart_service import archive_chart_service
+    try:
+        path = archive_path(symbol)
+        if not path.is_file():
+            return jsonify(error='Registrazione non trovata'), 404
+        selected = [int(value) for value in request.args.get('windows', '').split(',') if value]
+        if len(selected) > 5000 or any(value <= 0 for value in selected):
+            raise ValueError('Selezione finestre non valida')
+        start = float(request.args['from']) if request.args.get('from') else None
+        end = float(request.args['to']) if request.args.get('to') else None
+        import math
+        if any(value is not None and not math.isfinite(value) for value in (start, end)):
+            raise ValueError('Intervallo non valido')
+        result = archive_chart_service.chart(path, selected, start, end, mode=request.args.get('mode', 'all'))
+    except (ValueError, TypeError) as exc:
+        return jsonify(error=str(exc)), 400
+    return jsonify(result)

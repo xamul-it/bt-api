@@ -2,7 +2,6 @@
   "services": [
     "bt-live-event-writer.service",
     "bt-watchtower.service",
-    "parallel-sim.service",
     "zmq-proxy.service",
     "zmq-logger.service"
   ]

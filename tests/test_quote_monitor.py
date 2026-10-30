@@ -181,3 +181,28 @@ def test_deletion_refuses_archives_used_by_replay(client, monkeypatch):
     response = client.delete('/monitor/archives/AAPL', json={'confirm_symbol': 'AAPL', 'version': module.archive_version(module.DUMP / 'AAPL.json')})
     assert response.status_code == 409
     assert 'replay' in response.json['error']
+
+
+def test_archive_chart_routes_validate_window_selection_and_forward_zoom(client, monkeypatch):
+    from app.service.archive_chart_service import archive_chart_service
+    path = module.DUMP / 'AAPL.json'
+    path.write_text('{}\n')
+    calls = []
+    monkeypatch.setattr(archive_chart_service, 'chart', lambda *args, **kwargs: calls.append((args, kwargs)) or {'rows': [], 'window_count': 2})
+    response = client.get('/monitor/archives/AAPL/chart?windows=1,3&from=100&to=200')
+    assert response.status_code == 200
+    assert calls[0] == ((path, [1, 3], 100.0, 200.0), {'mode': 'all'})
+    for query in ['windows=-1', 'windows=bad', 'from=nan', 'to=inf']:
+        assert client.get('/monitor/archives/AAPL/chart?' + query).status_code == 400
+
+
+def test_archive_index_is_explicit_and_returns_analysis_progress(client, monkeypatch):
+    from app.service.archive_chart_service import archive_chart_service
+    path = module.DUMP / 'AAPL.json'
+    path.write_text('{}\n')
+    calls = []
+    monkeypatch.setattr(archive_chart_service, 'start', lambda path, force: calls.append(force) or {'state': 'QUEUED'})
+    monkeypatch.setattr(archive_chart_service, 'inspect', lambda path: {'state': 'INDEXING', 'progress': 0.5, 'windows': []})
+    assert client.post('/monitor/archives/AAPL/index', json={'refresh': True}).status_code == 202
+    assert calls == [True]
+    assert client.get('/monitor/archives/AAPL/index').json['progress'] == 0.5

@@ -11,6 +11,7 @@ from flask import Blueprint, Response, jsonify, request, send_file
 
 from app.scheduler import calculation_service, scheduler
 from app.service.calculation_job_service import CalculationConflict
+from app.service.cron_reference import attach_cron_reference, baseline_run_directory
 from app.service.main_service import repo
 from watchtower_runtime import ProfileParamsUnresolvedError, ProfileParamsIntegrityError
 import profile_baseline as _pbl
@@ -1170,6 +1171,14 @@ def watchtower_cron_overview(profile):
     if missing:
         return missing
     overview = repo.profile_cockpit(profile)
+    selected_id = request.args.get('baseline_id', type=int)
+    if request.args.get('baseline_id') and selected_id is None:
+        return jsonify(error='baseline_id non valido'), 400
+    rows = overview.get('baselines') or []
+    selected = next((row for row in rows if row['id'] == selected_id), None) if selected_id else next(iter(rows), None)
+    if selected_id and selected is None:
+        return jsonify(error='Baseline non appartenente al profilo'), 404
+    attach_cron_reference(overview, selected)
     baselines = _baselines_with_compatibility(profile)
     current_baseline = next(
         (row for row in baselines if row.get("compatibility", {}).get("is_default")),
@@ -1247,13 +1256,13 @@ def watchtower_cron_baseline_stats(profile, baseline_id):
     if (len(strategy) != 2 or not all(re.fullmatch(r"[A-Za-z0-9_]+", part) for part in strategy)
             or not re.fullmatch(r"[A-Za-z0-9_-]+", run_id)):
         return jsonify({"error": "baseline run identity unavailable"}), 404
-    # All scheduled checkouts publish into the shared output archive. Resolve
-    # only the recorded run identity; never accept arbitrary paths from clients.
-    output_root = (_pbl.BT_CORE / "out").resolve()
-    report = (output_root / strategy[0].lower() / strategy[1] / run_id / "stats.html").resolve()
-    if not report.is_relative_to(output_root) or not report.is_file():
+    # Scheduled profiles can publish into a separate checkout's output archive.
+    # Use the same trusted roots and recorded run identity as cron comparisons.
+    try:
+        directory = baseline_run_directory(profile, baseline, required_artifacts=("stats.html",))
+    except (OSError, ValueError):
         return jsonify({"error": "stats.html not available for this run"}), 404
-    return send_file(report, mimetype="text/html", conditional=True)
+    return send_file(directory / "stats.html", mimetype="text/html", conditional=True)
 
 
 @obs_bp.route("/watchtower/cron/baselines/jobs/<job_id>", methods=["GET"])
