@@ -132,9 +132,13 @@ def test_baseline_list_preserves_rows_when_current_context_is_unavailable(monkey
     assert response.get_json()[0]["compatibility"]["status"] == "unknown"
 
 
-def test_baseline_creation_rejects_historical_as_of():
+def test_baseline_creation_rejects_historical_as_of(monkeypatch):
     import app.watchtower as watchtower
 
+    def unexpected_database_access(_profile):
+        raise AssertionError("invalid requests must not access the database")
+
+    monkeypatch.setattr(watchtower.calculation_service.repo, "list_profile_baselines", unexpected_database_access)
     with pytest.raises(ValueError, match="as_of_date is no longer supported"):
         watchtower._start_profile_baseline_job("development", {
             "label": "old", "window_start": "2020-01-01", "window_end": "2021-01-01",

@@ -114,6 +114,8 @@ class CalculationJobService:
         return row
 
     def baseline_snapshot(self, profile: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if payload.get("as_of_date"):
+            raise ValueError("as_of_date is no longer supported; baselines use the current configuration")
         label = str(payload.get("label") or "").strip()
         if not label:
             raise ValueError("label is required")
@@ -124,8 +126,6 @@ class CalculationJobService:
             window_end = date.fromisoformat(str(payload.get("window_end") or ""))
         except ValueError as exc:
             raise ValueError("window_start and window_end must be YYYY-MM-DD") from exc
-        if payload.get("as_of_date"):
-            raise ValueError("as_of_date is no longer supported; baselines use the current configuration")
         if window_end < window_start:
             raise ValueError("window_end must be on or after window_start")
         env = pbl.load_profile_env(profile)
